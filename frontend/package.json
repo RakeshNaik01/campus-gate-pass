@@ -1,0 +1,40 @@
+{
+  "name": "campus-gate-pass-frontend",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web"
+  },
+  "dependencies": {
+    "@babel/preset-flow": "^7.29.7",
+    "@babel/preset-react": "^7.29.7",
+    "@expo/metro-config": "^57.0.9",
+    "@expo/metro-runtime": "~4.0.1",
+    "@vitejs/plugin-react": "^6.1.0",
+    "babel-preset-expo": "^57.0.7",
+    "expo": "~52.0.0",
+    "expo-camera": "~16.0.14",
+    "expo-image-manipulator": "~13.0.6",
+    "expo-status-bar": "~2.0.0",
+    "localtunnel": "^2.0.2",
+    "lucide-react-native": "^0.475.0",
+    "qrcode.react": "^4.2.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-native": "0.76.6",
+    "react-native-qrcode-svg": "^6.3.12",
+    "react-native-svg": "15.8.0",
+    "react-native-web": "~0.19.13",
+    "tesseract.js": "^5.1.1",
+    "vite": "^8.2.2",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.2",
+    "@vitejs/plugin-basic-ssl": "^2.3.0"
+  },
+  "private": true
+}
