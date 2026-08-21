@@ -795,3 +795,27 @@ async def submit_mobile_scan(req: MobileSessionSubmitRequest, background_tasks: 
         }
 
     return {"status": "SUCCESS", "verification": result.dict()}
+
+# ---------------------------------------------------------------------------
+# STATIC FRONTEND SERVING FOR DOCKER / CLOUD DEPLOYMENTS
+# ---------------------------------------------------------------------------
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+import os
+
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+if os.path.exists(static_dir):
+    assets_dir = os.path.join(static_dir, "assets")
+    if os.path.exists(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_frontend_spa(full_path: str):
+        # Don't intercept API routes
+        file_path = os.path.join(static_dir, full_path)
+        if full_path and os.path.exists(file_path) and os.path.isfile(file_path):
+            return FileResponse(file_path)
+        index_file = os.path.join(static_dir, "index.html")
+        if os.path.exists(index_file):
+            return FileResponse(index_file)
+        return {"status": "ONLINE", "message": "Campus Gate Pass API running."}

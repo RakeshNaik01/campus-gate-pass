@@ -1,8 +1,12 @@
 services:
   - type: web
     name: campus-gate-pass
-    env: docker
+    runtime: docker
     plan: free
+    region: oregon
     dockerfilePath: Dockerfile
     healthCheckPath: /
     autoDeploy: true
+    envVars:
+      - key: PORT
+        value: 8000
