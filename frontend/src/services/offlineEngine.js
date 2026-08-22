@@ -197,22 +197,40 @@ export function verifyGateEntryOffline(payload) {
       };
     }
   } else {
-    // Tier 2: Physical ID Card OCR Extraction (e.g. 25-5-117)
-    const cleanPayload = payloadStr.replace(/[^a-zA-Z0-9\-\/]/g, ' ').toUpperCase();
-    const admRegex = /\b\d{2}-\d+-\d+\b/g;
-    const matches = cleanPayload.match(admRegex);
-    const extractedAdm = matches ? matches[0] : payloadStr.trim();
+    // Tier 2: Intelligent Multi-Identifier Physical ID Card Matching
+    const upperPayload = payloadStr.toUpperCase();
+    const cleanDigits = payloadStr.replace(/[^0-9]/g, '');
+    const cleanAlphaNum = payloadStr.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
 
-    matchedUser = users.find(
-      (u) =>
-        u.adm_no.toUpperCase() === extractedAdm.toUpperCase() ||
-        u.hall_ticket_number === payloadStr.trim() ||
-        (extractedAdm.includes('25-5-117') && (u.adm_no === '25-5-117' || u.hall_ticket_number === '086256008'))
-    );
+    // 1. Direct search across all registered users
+    for (const u of users) {
+      const uHtn = (u.hall_ticket_number || '').trim();
+      const uAdm = (u.adm_no || '').trim().toUpperCase();
+      const uAdmClean = uAdm.replace(/[^a-zA-Z0-9]/g, '');
+      const uName = (u.student_name || '').trim().toUpperCase();
+
+      // Check if scanned card contains Hall Ticket Number
+      if (uHtn && (upperPayload.includes(uHtn.toUpperCase()) || cleanDigits.includes(uHtn))) {
+        matchedUser = u;
+        break;
+      }
+
+      // Check if scanned card contains Admission Number (formatted or clean digits)
+      if (uAdm && (upperPayload.includes(uAdm) || (uAdmClean.length >= 4 && cleanAlphaNum.includes(uAdmClean)))) {
+        matchedUser = u;
+        break;
+      }
+
+      // Check if scanned card contains Student Full Name (if >= 4 chars)
+      if (uName && uName.length >= 4 && upperPayload.includes(uName)) {
+        matchedUser = u;
+        break;
+      }
+    }
 
     if (!matchedUser) {
       // Demo fallback if Rakesh is in payload
-      if (payloadStr.includes('25-5-117') || payloadStr.includes('086256008') || payloadStr.toUpperCase().includes('RAKESH')) {
+      if (upperPayload.includes('25-5-117') || upperPayload.includes('086256008') || upperPayload.includes('RAKESH')) {
         matchedUser = {
           student_name: 'KETAVATH RAKESH NAIK',
           hall_ticket_number: '086256008',
@@ -236,8 +254,8 @@ export function verifyGateEntryOffline(payload) {
           name: 'Unknown Student',
           course: 'Unknown',
           hall_ticket_number: 'N/A',
-          adm_no: extractedAdm || 'N/A',
-          reason: 'ID Number Unrecognized in Registry',
+          adm_no: 'N/A',
+          reason: 'ID Card Unrecognized in Registry',
           notification_status: 'NONE',
         };
       }
@@ -321,16 +339,54 @@ export async function parseExcelClientSide(file) {
           // Normalize column names
           const normRow = {};
           Object.keys(row).forEach((k) => {
-            normRow[k.trim().toLowerCase().replace(/ /g, '_')] = row[k];
+            const cleanKey = k.trim().toLowerCase().replace(/ /g, '_').replace(/\./g, '').replace(/-/g, '_');
+            normRow[cleanKey] = row[k];
           });
 
-          const htn = String(normRow.hall_ticket_number || '').trim();
-          const adm = String(normRow.adm_no || '').trim();
-          const name = String(normRow.student_name || '').trim();
+          let htn = String(
+            normRow.hall_ticket_number ||
+            normRow.hall_ticket_no ||
+            normRow.ht_no ||
+            normRow.htno ||
+            normRow.roll_no ||
+            normRow.rollno ||
+            normRow.reg_no ||
+            normRow.regno ||
+            normRow.pin_no ||
+            normRow.pin ||
+            normRow.htn ||
+            normRow.id ||
+            ''
+          ).trim();
 
-          if (!htn || !adm || !name) return;
+          let adm = String(
+            normRow.adm_no ||
+            normRow.adm_number ||
+            normRow.admission_no ||
+            normRow.admission_number ||
+            normRow.admission ||
+            normRow.card_no ||
+            normRow.id_no ||
+            normRow.adm ||
+            normRow.admn_no ||
+            ''
+          ).trim();
 
-          let rawStatus = String(normRow.status || 'ACTIVE').trim().toUpperCase();
+          const name = String(
+            normRow.student_name ||
+            normRow.student ||
+            normRow.name ||
+            normRow.full_name ||
+            normRow.candidate_name ||
+            ''
+          ).trim();
+
+          if (!name) return;
+          if (!htn && !adm) return;
+          if (!htn) htn = adm;
+          if (!adm) adm = htn;
+
+          let rawStatus = String(normRow.status || normRow.state || 'ACTIVE').trim().toUpperCase();
           let status = 'ACTIVE';
           if (rawStatus.includes('SUSP') || rawStatus.includes('BLOCK')) {
             status = 'SUSPENDED';
@@ -338,7 +394,7 @@ export async function parseExcelClientSide(file) {
             status = 'INACTIVE';
           }
 
-          let role = String(normRow.role || 'STUDENT').trim().toUpperCase();
+          let role = String(normRow.role || normRow.type || normRow.designation || 'STUDENT').trim().toUpperCase();
           if (!['STUDENT', 'LECTURER', 'FACULTY'].includes(role)) role = 'STUDENT';
 
           const entry = {
@@ -346,17 +402,17 @@ export async function parseExcelClientSide(file) {
             adm_no: adm,
             student_name: name,
             role: role,
-            course: String(normRow.course || 'BCA').trim(),
-            duration: String(normRow.duration || '2024-2027').trim(),
-            phone_number: String(normRow.phone_number || '+91').trim(),
-            email: String(normRow.email || '').trim(),
+            course: String(normRow.course || normRow.branch || normRow.department || 'BCA').trim(),
+            duration: String(normRow.duration || normRow.batch || normRow.year || '2024-2027').trim(),
+            phone_number: String(normRow.phone_number || normRow.phone || normRow.mobile || '+919876543210').trim(),
+            email: String(normRow.email || normRow.email_id || 'student@campus.edu').trim(),
             status: status,
           };
 
           const existingIdx = users.findIndex(
             (u) =>
-              u.hall_ticket_number === htn ||
-              u.adm_no.toLowerCase() === adm.toLowerCase()
+              (htn && u.hall_ticket_number === htn) ||
+              (adm && u.adm_no.toLowerCase() === adm.toLowerCase())
           );
 
           if (existingIdx >= 0) {

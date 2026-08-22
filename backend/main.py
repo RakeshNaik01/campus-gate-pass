@@ -245,23 +245,41 @@ async def verify_gate_entry(request: Request, background_tasks: BackgroundTasks)
                     notification_status="PENDING"
                 )
     else:
-        # Tier 2: Physical ID Card OCR text matching visible adm_no or HTN
-        extracted_adm_no = extract_admission_number_from_ocr(payload_str)
+        # Tier 2: Intelligent Multi-Identifier Physical ID Card Matching
+        cursor.execute("SELECT * FROM users")
+        all_users = cursor.fetchall()
 
-        # Database lookup: check adm_no OR hall_ticket_number
-        cursor.execute("""
-        SELECT * FROM users 
-        WHERE UPPER(adm_no) = UPPER(?) 
-           OR hall_ticket_number = ? 
-           OR UPPER(adm_no) = UPPER(?)
-           OR (? = '25-5-117' AND (adm_no = '25-5-117' OR hall_ticket_number = '086256008'))
-        LIMIT 1
-        """, (extracted_adm_no, payload_str.strip(), payload_str.strip(), extracted_adm_no))
-        user_row = cursor.fetchone()
+        upper_payload = payload_str.upper()
+        clean_digits = re.sub(r'[^0-9]', '', payload_str)
+        clean_alphanum = re.sub(r'[^A-Z0-9]', '', upper_payload)
+
+        matched_row = None
+        for u in all_users:
+            u_htn = str(u["hall_ticket_number"]).strip() if u["hall_ticket_number"] else ""
+            u_adm = str(u["adm_no"]).strip().upper() if u["adm_no"] else ""
+            u_adm_clean = re.sub(r'[^A-Z0-9]', '', u_adm)
+            u_name = str(u["student_name"]).strip().upper() if u["student_name"] else ""
+
+            # Check Hall Ticket Number
+            if u_htn and (u_htn.upper() in upper_payload or u_htn in clean_digits):
+                matched_row = u
+                break
+
+            # Check Admission Number (formatted or digits)
+            if u_adm and (u_adm in upper_payload or (len(u_adm_clean) >= 4 and u_adm_clean in clean_alphanum)):
+                matched_row = u
+                break
+
+            # Check Full Name
+            if u_name and len(u_name) >= 4 and u_name in upper_payload:
+                matched_row = u
+                break
+
+        user_row = matched_row
 
         if not user_row:
             # Fallback for Vaagdevi ID demo if not in database
-            if "25-5-117" in payload_str or "086256008" in payload_str or "RAKESH" in payload_str.upper():
+            if "25-5-117" in upper_payload or "086256008" in upper_payload or "RAKESH" in upper_payload:
                 matched_user = {
                     "hall_ticket_number": "086256008",
                     "adm_no": "25-5-117",
@@ -289,8 +307,8 @@ async def verify_gate_entry(request: Request, background_tasks: BackgroundTasks)
                     name="Unknown",
                     course="Unknown",
                     hall_ticket_number="N/A",
-                    adm_no=extracted_adm_no or "N/A",
-                    reason="ID Number Unrecognized in Registry",
+                    adm_no="N/A",
+                    reason="ID Card Unrecognized in Registry",
                     notification_status="NONE"
                 )
         elif user_row["status"] == "SUSPENDED":

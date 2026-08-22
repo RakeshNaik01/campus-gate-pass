@@ -8,15 +8,16 @@ let isWorkerInitializing = false;
 
 // Regex patterns to identify Hall Ticket Number and Admission Number from entire card text
 const HALL_TICKET_PATTERNS = [
-  /(?:HALL\s*TICKET(?:\s*NO)?|HT\s*NO|H\.T\s*NO|ROLL\s*NO|REG\s*NO|PIN\s*NO)[:\s]*([0-9A-Z]{6,12})/i,
-  /\b(086256\d{3})\b/i,
-  /\b(\d{9,12})\b/,
+  /(?:HALL\s*TICKET(?:\s*NO)?|HT\s*NO|H\.T\s*NO|ROLL\s*NO|REG\s*NO|PIN\s*NO)[:\s]*([0-9A-Z]{5,14})/i,
+  /\b(086256\d{2,4})\b/i,
+  /\b(\d{6,14})\b/,
 ];
 
 const ADMISSION_PATTERNS = [
-  /(?:ADM\s*NO|ADMISSION\s*NO|ID\s*NO|CARD\s*NO)[:\s]*([0-9A-Z-]+)/i,
-  /\b(\d{2}-\d{1,2}-\d{3,4})\b/i,
-  /\b(FAC-\d{2}-\d{2})\b/i,
+  /(?:ADM\s*NO|ADMISSION\s*NO|ID\s*NO|CARD\s*NO)[:\s]*([0-9A-Z-\/\.]+)/i,
+  /\b(\d{2}[-\/\.]\d{1,3}[-\/\.]\d{2,5})\b/i,
+  /\b([A-Z0-9]{2,5}[-\/\.][A-Z0-9]+[-\/\.][A-Z0-9]+)\b/i,
+  /\b(FAC[-\/\.]\d{2}[-\/\.]\d{2})\b/i,
 ];
 
 /**

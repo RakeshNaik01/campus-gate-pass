@@ -106,17 +106,63 @@ def process_student_excel_upload(file_contents: bytes, filename: str = "upload.x
             "inserted_count": 0
         }
 
-    # Normalize column names: strip whitespace, lowercase, replace spaces with underscores
-    df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
+    # Normalize column names: strip whitespace, lowercase, replace spaces and special chars with underscores
+    col_mapping = {}
+    for c in df.columns:
+        norm = str(c).strip().lower().replace(" ", "_").replace(".", "").replace("-", "_")
+        if norm in ["hall_ticket_number", "hall_ticket_no", "ht_no", "htno", "roll_no", "rollno", "reg_no", "regno", "pin_no", "pin", "htn", "id"]:
+            col_mapping[c] = "hall_ticket_number"
+        elif norm in ["adm_no", "adm_number", "admission_no", "admission_number", "admission", "card_no", "id_no", "adm", "admn_no"]:
+            col_mapping[c] = "adm_no"
+        elif norm in ["student_name", "student", "name", "full_name", "candidate_name"]:
+            col_mapping[c] = "student_name"
+        elif norm in ["phone_number", "phone", "mobile", "contact", "mobile_no"]:
+            col_mapping[c] = "phone_number"
+        elif norm in ["email", "email_id", "mail"]:
+            col_mapping[c] = "email"
+        elif norm in ["course", "branch", "department", "dept", "class", "stream"]:
+            col_mapping[c] = "course"
+        elif norm in ["duration", "batch", "year", "academic_year"]:
+            col_mapping[c] = "duration"
+        elif norm in ["status", "state"]:
+            col_mapping[c] = "status"
+        elif norm in ["role", "type", "designation", "category"]:
+            col_mapping[c] = "role"
+        else:
+            col_mapping[c] = norm
 
-    # Check for required columns
-    missing_cols = [col for col in REQUIRED_COLUMNS if col not in df.columns]
-    if missing_cols:
+    df.rename(columns=col_mapping, inplace=True)
+
+    # Ensure required columns exist, fallback if needed
+    if "student_name" not in df.columns:
         return {
             "status": "ERROR",
-            "message": f"Missing required columns in spreadsheet: {', '.join(missing_cols)}",
+            "message": "Missing 'student_name' or 'name' column in spreadsheet.",
             "inserted_count": 0
         }
+    if "hall_ticket_number" not in df.columns and "adm_no" not in df.columns:
+        return {
+            "status": "ERROR",
+            "message": "Spreadsheet must contain at least one ID column: 'hall_ticket_number' or 'adm_no'.",
+            "inserted_count": 0
+        }
+
+    if "hall_ticket_number" not in df.columns:
+        df["hall_ticket_number"] = df["adm_no"]
+    if "adm_no" not in df.columns:
+        df["adm_no"] = df["hall_ticket_number"]
+    if "course" not in df.columns:
+        df["course"] = "BCA"
+    if "duration" not in df.columns:
+        df["duration"] = "2024-2027"
+    if "phone_number" not in df.columns:
+        df["phone_number"] = "+919876543210"
+    if "email" not in df.columns:
+        df["email"] = "student@campus.edu"
+    if "status" not in df.columns:
+        df["status"] = "ACTIVE"
+    if "role" not in df.columns:
+        df["role"] = "STUDENT"
 
     conn = get_db_connection()
     cursor = conn.cursor()
