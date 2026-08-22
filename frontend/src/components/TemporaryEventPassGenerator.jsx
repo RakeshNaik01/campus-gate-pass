@@ -9,49 +9,21 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
+import { jsPDF } from 'jspdf';
+import QRCode from 'qrcode';
 import JSZip from 'jszip';
 import QRCodeRenderer from './QRCodeRenderer';
 import { colors } from '../theme/colors';
 import { fetchUsers } from '../services/api';
 import { parseExcelClientSide } from '../services/offlineEngine';
 
-// Helper to convert rendered SVG QR element to PNG Blob
-const convertSvgToPngBlob = (svgElement) => {
-  return new Promise((resolve, reject) => {
-    try {
-      const svgData = new XMLSerializer().serializeToString(svgElement);
-      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-      const DOMURL = window.URL || window.webkitURL || window;
-      const url = DOMURL.createObjectURL(svgBlob);
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = 500;
-        canvas.height = 500;
-        const ctx = canvas.getContext('2d');
-        ctx.fillStyle = '#FFFFFF';
-        ctx.fillRect(0, 0, 500, 500);
-        ctx.drawImage(img, 0, 0, 500, 500);
-        DOMURL.revokeObjectURL(url);
-        canvas.toBlob((blob) => {
-          resolve(blob);
-        }, 'image/png');
-      };
-      img.onerror = (e) => reject(e);
-      img.src = url;
-    } catch (e) {
-      reject(e);
-    }
-  });
-};
-
 export default function TemporaryEventPassGenerator({ onTestScanAtGate }) {
-  // Mode: 'SINGLE' or 'BATCH'
-  const [generatorMode, setGeneratorMode] = useState('BATCH'); // Default to batch as requested
+  // Mode: 'BATCH' or 'SINGLE'
+  const [generatorMode, setGeneratorMode] = useState('BATCH');
 
   // Single Student State
   const [users, setUsers] = useState([]);
-  const [participantMode, setParticipantMode] = useState('REGISTERED'); // 'REGISTERED' or 'GUEST'
+  const [participantMode, setParticipantMode] = useState('REGISTERED');
   const [selectedUser, setSelectedUser] = useState(null);
   const [searchStudent, setSearchStudent] = useState('');
 
@@ -62,7 +34,7 @@ export default function TemporaryEventPassGenerator({ onTestScanAtGate }) {
   const [guestId, setGuestId] = useState('');
 
   // Event & Direction Settings
-  const [eventName, setEventName] = useState('Class Gate Permission');
+  const [eventName, setEventName] = useState('Class Campus Gate Permission');
   const [eventVenue, setEventVenue] = useState('Main Gate & Campus');
   const [gateDirection, setGateDirection] = useState('GATE_IN'); // 'GATE_IN' | 'GATE_OUT' | 'BOTH'
   const [isSingleUse, setIsSingleUse] = useState(true); // One-Time Scan Policy
@@ -78,10 +50,14 @@ export default function TemporaryEventPassGenerator({ onTestScanAtGate }) {
   const [batchCourseFilter, setBatchCourseFilter] = useState('ALL');
   const [isParsingBatch, setIsParsingBatch] = useState(false);
   const [generatedBatchPasses, setGeneratedBatchPasses] = useState([]);
+  const [masterClassPass, setMasterClassPass] = useState(null);
   const [batchSuccessMsg, setBatchSuccessMsg] = useState('');
   const [batchSearch, setBatchSearch] = useState('');
+
+  // Download States
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [isZipping, setIsZipping] = useState(false);
-  const [zipProgressMsg, setZipProgressMsg] = useState('');
+  const [statusProgressMsg, setStatusProgressMsg] = useState('');
 
   const fileInputRef = useRef(null);
 
@@ -204,7 +180,7 @@ export default function TemporaryEventPassGenerator({ onTestScanAtGate }) {
     }
   };
 
-  // --- BATCH PASS GENERATION ---
+  // --- BATCH PASS GENERATION (INDIVIDUAL + HUGE MASTER CLASS QR) ---
   const handleGenerateBatchPasses = () => {
     let sourceList = [];
     if (batchSource === 'FILE') {
@@ -225,7 +201,9 @@ export default function TemporaryEventPassGenerator({ onTestScanAtGate }) {
 
     const { now, validFrom, validTill } = calculateValidityDates();
     const eventId = eventName.replace(/[^a-zA-Z0-9]/g, '-').toUpperCase();
+    const className = batchSource === 'FILE' ? (eventName || 'Uploaded Class') : `${batchCourseFilter} Department`;
 
+    // 1. Generate Individual Passes for Each Student
     const generated = sourceList.map((st, idx) => {
       const htn = st.hall_ticket_number || `HTN-${idx + 1000}`;
       const name = st.student_name || 'Student';
@@ -247,7 +225,7 @@ export default function TemporaryEventPassGenerator({ onTestScanAtGate }) {
         valid_from: validFrom.toISOString(),
         valid_till: validTill.toISOString(),
         generated_at: now.toISOString(),
-        security_hash: `SIG-BATCH-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
+        security_hash: `SIG-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
       };
 
       return {
@@ -255,46 +233,335 @@ export default function TemporaryEventPassGenerator({ onTestScanAtGate }) {
         payload: passPayload,
         tokenString: JSON.stringify(passPayload),
         validTillFormatted: validTill.toLocaleString(),
+        validFromFormatted: validFrom.toLocaleString(),
       };
     });
 
+    // 2. Generate Huge Master Class QR Pass (For Class Leader / Group Entry)
+    const masterTokenId = `MASTER-${gateDirection}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+    const masterPayload = {
+      token_id: masterTokenId,
+      pass_type: 'BATCH_MASTER',
+      gate_direction: gateDirection,
+      is_single_use: isSingleUse,
+      event_id: eventId,
+      event_name: eventName,
+      class_name: className,
+      student_count: generated.length,
+      participant_name: `CLASS MASTER: ${className}`,
+      hall_ticket_number: masterTokenId,
+      valid_from: validFrom.toISOString(),
+      valid_till: validTill.toISOString(),
+      generated_at: now.toISOString(),
+      security_hash: `SIG-MASTER-${Math.random().toString(36).substring(2, 8).toUpperCase()}`,
+    };
+
+    setMasterClassPass({
+      payload: masterPayload,
+      tokenString: JSON.stringify(masterPayload),
+      validTillFormatted: validTill.toLocaleString(),
+      validFromFormatted: validFrom.toLocaleString(),
+      studentCount: generated.length,
+      className: className,
+    });
+
     setGeneratedBatchPasses(generated);
-    setBatchSuccessMsg(`🎉 Successfully generated ${generated.length} Single-Use ${gateDirection.replace('_', '-')} QR Passes!`);
+    setBatchSuccessMsg(`🎉 Generated ${generated.length} Individual QR Passes + 1 Huge Master Class QR Pass!`);
   };
 
-  const handlePrintBatch = () => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.print();
-    } else {
-      alert('Printing is available on web browsers.');
+  // --- 📄 DOWNLOAD WHOLE CLASS PASSES AS A MULTI-PAGE PDF DOCUMENT ---
+  const handleDownloadClassPdf = async () => {
+    if (generatedBatchPasses.length === 0) return;
+
+    setIsGeneratingPdf(true);
+    setStatusProgressMsg(`⏳ Generating multi-page PDF document for ${generatedBatchPasses.length} students...`);
+
+    try {
+      const doc = new jsPDF('p', 'mm', 'a4');
+      const pageWidth = doc.internal.pageSize.getWidth(); // 210mm
+      const pageHeight = doc.internal.pageSize.getHeight(); // 297mm
+
+      // ----------------------------------------------------
+      // PAGE 1: COVER PAGE & HUGE MASTER CLASS QR PASS
+      // ----------------------------------------------------
+      doc.setFillColor(11, 15, 25);
+      doc.rect(0, 0, pageWidth, pageHeight, 'F');
+
+      // Top Header Box
+      doc.setFillColor(30, 41, 59);
+      doc.roundedRect(12, 12, pageWidth - 24, 26, 3, 3, 'F');
+
+      doc.setTextColor(96, 165, 250);
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      doc.text('CAMPUS SECURITY ACCESS CONTROL — OFFICIAL CLASS BATCH PASS', pageWidth / 2, 20, { align: 'center' });
+
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(14);
+      doc.text(eventName.toUpperCase(), pageWidth / 2, 30, { align: 'center' });
+
+      // Master Info Card
+      doc.setFillColor(15, 23, 42);
+      doc.roundedRect(12, 44, pageWidth - 24, 235, 4, 4, 'F');
+
+      // Direction Badge
+      const isGateIn = gateDirection === 'GATE_IN';
+      doc.setFillColor(isGateIn ? 5 : 220, isGateIn ? 150 : 38, isGateIn ? 105 : 38);
+      doc.roundedRect(pageWidth / 2 - 35, 50, 70, 9, 2, 2, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'bold');
+      doc.text(`${gateDirection.replace('_', '-')} PASS (CLASS-WIDE)`, pageWidth / 2, 56, { align: 'center' });
+
+      // Master QR Code (High Resolution with Quiet Zone Margin)
+      if (masterClassPass) {
+        const masterQrUrl = await QRCode.toDataURL(masterClassPass.tokenString, {
+          width: 600,
+          margin: 2,
+          errorCorrectionLevel: 'M',
+        });
+        doc.setFillColor(255, 255, 255);
+        doc.roundedRect(pageWidth / 2 - 40, 64, 80, 80, 3, 3, 'F');
+        doc.addImage(masterQrUrl, 'PNG', pageWidth / 2 - 38, 66, 76, 76);
+      }
+
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(13);
+      doc.text(`MASTER CLASS PASS — ${generatedBatchPasses.length} STUDENTS APPROVED`, pageWidth / 2, 154, { align: 'center' });
+
+      // Master Details Table
+      doc.setFontSize(9);
+      doc.setTextColor(148, 163, 184);
+      const startY = 166;
+      const details = [
+        ['CLASS / DEPARTMENT:', masterClassPass?.className || 'Class Roster'],
+        ['TOTAL STUDENTS:', `${generatedBatchPasses.length} Students`],
+        ['DIRECTION / TYPE:', `${gateDirection.replace('_', '-')} (${isGateIn ? 'Campus Ingress' : 'Campus Departure'})`],
+        ['POLICY:', isSingleUse ? '🔥 SINGLE-USE SCAN (Burned after first gate scan)' : 'MULTI-USE PASS'],
+        ['VALID TILL:', masterClassPass?.validTillFormatted || 'N/A'],
+        ['MASTER TOKEN ID:', masterClassPass?.payload.token_id || 'N/A'],
+      ];
+
+      details.forEach((row, i) => {
+        const y = startY + i * 8;
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(148, 163, 184);
+        doc.text(row[0], 25, y);
+        doc.setTextColor(255, 255, 255);
+        doc.text(row[1], 85, y);
+      });
+
+      doc.setFontSize(8);
+      doc.setTextColor(245, 158, 11);
+      doc.text('⚠️ Security Instruction: Scan master QR code above for entire class group clearance, or individual student QRs on following pages.', pageWidth / 2, 222, { align: 'center', maxWidth: 170 });
+
+      // ----------------------------------------------------
+      // PAGES 2+: INDIVIDUAL STUDENT ID BADGE CARDS (4 CARDS PER PAGE)
+      // ----------------------------------------------------
+      const cardsPerPage = 4;
+      const totalPages = Math.ceil(generatedBatchPasses.length / cardsPerPage);
+
+      for (let p = 0; p < totalPages; p++) {
+        doc.addPage();
+        doc.setFillColor(11, 15, 25);
+        doc.rect(0, 0, pageWidth, pageHeight, 'F');
+
+        // Page Header
+        doc.setFontSize(9);
+        doc.setTextColor(96, 165, 250);
+        doc.setFont('helvetica', 'bold');
+        doc.text(`${eventName} — Student Passes (Page ${p + 1} of ${totalPages})`, pageWidth / 2, 12, { align: 'center' });
+
+        const pageStudents = generatedBatchPasses.slice(p * cardsPerPage, (p + 1) * cardsPerPage);
+
+        // 2x2 Grid Layout
+        for (let idx = 0; idx < pageStudents.length; idx++) {
+          const item = pageStudents[idx];
+          const col = idx % 2;
+          const row = Math.floor(idx / 2);
+
+          const cardX = 12 + col * 94; // Card width 90mm, gap 4mm
+          const cardY = 18 + row * 132; // Card height 128mm, gap 4mm
+          const cardW = 90;
+          const cardH = 128;
+
+          // Card Background
+          doc.setFillColor(15, 23, 42);
+          doc.roundedRect(cardX, cardY, cardW, cardH, 3, 3, 'F');
+
+          // Card Top Header
+          doc.setFillColor(isGateIn ? 5 : 220, isGateIn ? 150 : 38, isGateIn ? 105 : 38);
+          doc.roundedRect(cardX, cardY, cardW, 14, 3, 3, 'F');
+          doc.rect(cardX, cardY + 10, cardW, 4, 'F');
+
+          doc.setTextColor(255, 255, 255);
+          doc.setFontSize(8);
+          doc.setFont('helvetica', 'bold');
+          doc.text(`VAAGDEVI GATEWAY — ${gateDirection.replace('_', '-')}`, cardX + cardW / 2, cardY + 8, { align: 'center' });
+
+          // Generate Crisp QR Data URL for Student with Quiet Zone
+          const qrDataUrl = await QRCode.toDataURL(item.tokenString, {
+            width: 400,
+            margin: 2,
+            errorCorrectionLevel: 'M',
+          });
+
+          // QR Box
+          doc.setFillColor(255, 255, 255);
+          doc.roundedRect(cardX + cardW / 2 - 25, cardY + 18, 50, 50, 2, 2, 'F');
+          doc.addImage(qrDataUrl, 'PNG', cardX + cardW / 2 - 24, cardY + 19, 48, 48);
+
+          // Student Details
+          doc.setTextColor(255, 255, 255);
+          doc.setFontSize(9);
+          doc.setFont('helvetica', 'bold');
+          doc.text(item.payload.participant_name.toUpperCase(), cardX + cardW / 2, cardY + 75, { align: 'center', maxWidth: 84 });
+
+          doc.setTextColor(96, 165, 250);
+          doc.setFontSize(8);
+          doc.text(`ROLL NO: ${item.payload.hall_ticket_number}`, cardX + cardW / 2, cardY + 82, { align: 'center' });
+
+          doc.setTextColor(148, 163, 184);
+          doc.setFontSize(7);
+          doc.setFont('helvetica', 'normal');
+          doc.text(`Course: ${item.student.course || 'Vaagdevi Engineering'}`, cardX + cardW / 2, cardY + 88, { align: 'center' });
+
+          doc.text(`Valid Till: ${item.validTillFormatted}`, cardX + cardW / 2, cardY + 94, { align: 'center' });
+
+          // Single-Use Notice
+          doc.setFillColor(30, 41, 59);
+          doc.roundedRect(cardX + 6, cardY + 102, cardW - 12, 18, 2, 2, 'F');
+
+          doc.setTextColor(245, 158, 11);
+          doc.setFontSize(7);
+          doc.setFont('helvetica', 'bold');
+          doc.text('🔥 SINGLE-USE SCAN POLICY', cardX + cardW / 2, cardY + 109, { align: 'center' });
+
+          doc.setTextColor(148, 163, 184);
+          doc.setFontSize(6);
+          doc.setFont('helvetica', 'normal');
+          doc.text('Burns immediately upon gate entry/exit.', cardX + cardW / 2, cardY + 115, { align: 'center' });
+        }
+      }
+
+      // Save PDF Document
+      const filename = `${eventName.replace(/[^a-zA-Z0-9_-]/g, '_')}_${gateDirection}_Class_QR_Passes.pdf`;
+      doc.save(filename);
+
+      setStatusProgressMsg(`✅ Successfully generated & downloaded full Class PDF (${generatedBatchPasses.length} students)!`);
+      setTimeout(() => setStatusProgressMsg(''), 5000);
+    } catch (err) {
+      console.error('PDF Generation Error:', err);
+      alert(`Failed to generate PDF document: ${err.message || err}`);
+    } finally {
+      setIsGeneratingPdf(false);
     }
   };
 
-  // --- 1-CLICK ZIP ARCHIVE DOWNLOAD FOR ALL STUDENT QRS ---
+  // --- 📄 DOWNLOAD MASTER CLASS QR POSTER PDF ---
+  const handleDownloadMasterPosterPdf = async () => {
+    if (!masterClassPass) return;
+
+    try {
+      const doc = new jsPDF('p', 'mm', 'a4');
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+
+      doc.setFillColor(11, 15, 25);
+      doc.rect(0, 0, pageWidth, pageHeight, 'F');
+
+      doc.setFillColor(30, 41, 59);
+      doc.roundedRect(12, 12, pageWidth - 24, 26, 3, 3, 'F');
+
+      doc.setTextColor(96, 165, 250);
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'bold');
+      doc.text('CAMPUS SECURITY ACCESS CONTROL — MASTER CLASS POSTER', pageWidth / 2, 20, { align: 'center' });
+
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(14);
+      doc.text(eventName.toUpperCase(), pageWidth / 2, 30, { align: 'center' });
+
+      // Master Card Box
+      doc.setFillColor(15, 23, 42);
+      doc.roundedRect(12, 44, pageWidth - 24, 235, 4, 4, 'F');
+
+      const isGateIn = gateDirection === 'GATE_IN';
+      doc.setFillColor(isGateIn ? 5 : 220, isGateIn ? 150 : 38, isGateIn ? 105 : 38);
+      doc.roundedRect(pageWidth / 2 - 40, 52, 80, 11, 2, 2, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      doc.text(`${gateDirection.replace('_', '-')} MASTER PASS`, pageWidth / 2, 60, { align: 'center' });
+
+      // Huge Master QR
+      const masterQrUrl = await QRCode.toDataURL(masterClassPass.tokenString, {
+        width: 800,
+        margin: 2,
+        errorCorrectionLevel: 'H',
+      });
+
+      doc.setFillColor(255, 255, 255);
+      doc.roundedRect(pageWidth / 2 - 55, 68, 110, 110, 3, 3, 'F');
+      doc.addImage(masterQrUrl, 'PNG', pageWidth / 2 - 52, 71, 104, 104);
+
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(14);
+      doc.text(`CLASS: ${masterClassPass.className.toUpperCase()}`, pageWidth / 2, 192, { align: 'center' });
+
+      doc.setTextColor(52, 211, 153);
+      doc.setFontSize(12);
+      doc.text(`✓ ${generatedBatchPasses.length} STUDENTS GROUP ACCESS GRANTED`, pageWidth / 2, 202, { align: 'center' });
+
+      doc.setTextColor(148, 163, 184);
+      doc.setFontSize(9);
+      doc.text(`Valid Till: ${masterClassPass.validTillFormatted}`, pageWidth / 2, 212, { align: 'center' });
+
+      doc.setTextColor(245, 158, 11);
+      doc.setFontSize(8);
+      doc.text('🔥 ONE-TIME SCAN GROUP ENTRY • SCAN AT SECURITY GATE TERMINAL', pageWidth / 2, 224, { align: 'center' });
+
+      doc.save(`MASTER_POSTER_${eventName.replace(/\s+/g, '_')}_${gateDirection}.pdf`);
+    } catch (e) {
+      alert('Failed to generate Master Poster PDF');
+    }
+  };
+
+  // --- 📦 1-CLICK ZIP ARCHIVE OF HIGH-RES PNG IMAGES ---
   const handleDownloadAllQrZip = async () => {
     if (generatedBatchPasses.length === 0) return;
     setIsZipping(true);
-    setZipProgressMsg(`⏳ Generating ZIP package with ${generatedBatchPasses.length} QR Code image badges...`);
+    setStatusProgressMsg(`⏳ Generating ZIP package with ${generatedBatchPasses.length} QR Code PNG images...`);
 
     try {
       const zip = new JSZip();
       const folderName = `Class_QR_Passes_${eventName.replace(/[^a-zA-Z0-9_-]/g, '_')}_${gateDirection}`;
       const folder = zip.folder(folderName);
 
+      // Add Master QR image
+      if (masterClassPass) {
+        const masterQrDataUrl = await QRCode.toDataURL(masterClassPass.tokenString, { width: 600, margin: 2 });
+        const masterBase64 = masterQrDataUrl.split(',')[1];
+        folder.file(`00_MASTER_CLASS_QR_${gateDirection}.png`, masterBase64, { base64: true });
+      }
+
+      // Add individual student QR images
       for (let i = 0; i < generatedBatchPasses.length; i++) {
         const item = generatedBatchPasses[i];
         const htn = (item.payload.hall_ticket_number || `ST-${i}`).replace(/[^a-zA-Z0-9_-]/g, '_');
         const name = (item.payload.participant_name || 'Student').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '');
         const filename = `${htn}_${name}_${item.payload.gate_direction}.png`;
 
-        const svgEl = document.getElementById(`batch-qr-svg-${item.payload.hall_ticket_number}`);
-        if (svgEl) {
-          const blob = await convertSvgToPngBlob(svgEl);
-          folder.file(filename, blob);
-        }
+        const qrDataUrl = await QRCode.toDataURL(item.tokenString, {
+          width: 500,
+          margin: 2,
+          errorCorrectionLevel: 'M',
+        });
+        const base64Data = qrDataUrl.split(',')[1];
+        folder.file(filename, base64Data, { base64: true });
       }
 
-      setZipProgressMsg(`📦 Compressing ZIP file...`);
+      setStatusProgressMsg(`📦 Compressing ZIP file...`);
       const zipBlob = await zip.generateAsync({ type: 'blob' });
 
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -306,8 +573,8 @@ export default function TemporaryEventPassGenerator({ onTestScanAtGate }) {
         document.body.removeChild(link);
       }
 
-      setZipProgressMsg(`✅ Downloaded ZIP archive containing all ${generatedBatchPasses.length} QR codes!`);
-      setTimeout(() => setZipProgressMsg(''), 4000);
+      setStatusProgressMsg(`✅ Successfully downloaded ZIP package with all ${generatedBatchPasses.length} QR images!`);
+      setTimeout(() => setStatusProgressMsg(''), 4000);
     } catch (err) {
       console.error(err);
       alert(`Could not create ZIP: ${err.message || err}`);
@@ -316,19 +583,18 @@ export default function TemporaryEventPassGenerator({ onTestScanAtGate }) {
     }
   };
 
-  // --- DOWNLOAD INDIVIDUAL STUDENT PNG IMAGE ---
+  // --- 📥 DOWNLOAD INDIVIDUAL STUDENT PNG IMAGE (HIGH-RES WITH QUIET ZONE) ---
   const handleDownloadSingleStudentPng = async (item) => {
     try {
-      const svgEl = document.getElementById(`batch-qr-svg-${item.payload.hall_ticket_number}`);
-      if (!svgEl) {
-        alert('QR element not found.');
-        return;
-      }
-      const blob = await convertSvgToPngBlob(svgEl);
+      const qrDataUrl = await QRCode.toDataURL(item.tokenString, {
+        width: 600,
+        margin: 2,
+        errorCorrectionLevel: 'M',
+      });
       const htn = (item.payload.hall_ticket_number || 'STUDENT').replace(/[^a-zA-Z0-9_-]/g, '_');
       const name = (item.payload.participant_name || 'Student').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '');
       const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
+      link.href = qrDataUrl;
       link.download = `${htn}_${name}_${item.payload.gate_direction}_QR.png`;
       document.body.appendChild(link);
       link.click();
@@ -338,6 +604,7 @@ export default function TemporaryEventPassGenerator({ onTestScanAtGate }) {
     }
   };
 
+  // --- 📊 EXPORT TO CSV / EXCEL ---
   const handleExportBatchToCsv = () => {
     if (generatedBatchPasses.length === 0) return;
 
@@ -392,7 +659,7 @@ export default function TemporaryEventPassGenerator({ onTestScanAtGate }) {
         </View>
         <Text style={styles.headerTitle}>Single-Use Temporary QR Pass Generator (GATE-IN / GATE-OUT)</Text>
         <Text style={styles.headerDesc}>
-          Generate cryptographic one-time use passes for a single student or an entire class at once via spreadsheet upload. Passes automatically burn and invalidate upon the first scan to prevent re-entry.
+          Generate cryptographic one-time use passes for a single student or an entire class at once via spreadsheet upload. Download as a multi-page PDF badge sheet, ZIP archive, or Huge Master Class QR code.
         </Text>
       </View>
 
@@ -616,6 +883,54 @@ export default function TemporaryEventPassGenerator({ onTestScanAtGate }) {
             ) : null}
           </View>
 
+          {/* 🏷️ HUGE MASTER CLASS QR CODE PREVIEW CARD */}
+          {masterClassPass && (
+            <View style={styles.masterClassCard}>
+              <View style={styles.masterBadgeHeader}>
+                <View style={styles.masterTitleRow}>
+                  <Text style={styles.masterBadgeLabel}>🏷️ MASTER CLASS QR PASS</Text>
+                  <View style={[styles.dirBadge, masterClassPass.payload.gate_direction === 'GATE_IN' ? styles.dirBadgeGreen : styles.dirBadgeRed]}>
+                    <Text style={styles.dirBadgeText}>{masterClassPass.payload.gate_direction.replace('_', '-')}</Text>
+                  </View>
+                </View>
+                <Text style={styles.masterEventTitle}>{masterClassPass.className} — Group Clearance</Text>
+                <Text style={styles.masterCountText}>✓ {masterClassPass.studentCount} Students Authorized Under This Code</Text>
+              </View>
+
+              <View style={styles.masterQrContainer}>
+                <QRCodeRenderer
+                  value={masterClassPass.tokenString}
+                  size={Platform.OS === 'web' ? 240 : 180}
+                  color="#000000"
+                  backgroundColor="#FFFFFF"
+                />
+                <Text style={styles.masterScanHint}>
+                  Security Guards: Scan once to grant group entry/exit for all {masterClassPass.studentCount} students
+                </Text>
+              </View>
+
+              <View style={styles.masterActionsRow}>
+                <TouchableOpacity
+                  style={styles.masterPosterBtn}
+                  onPress={handleDownloadMasterPosterPdf}
+                >
+                  <Text style={styles.masterPosterBtnText}>📄 Download Master Poster (PDF)</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.masterTestBtn}
+                  onPress={() => {
+                    if (onTestScanAtGate) {
+                      onTestScanAtGate(masterClassPass.tokenString);
+                    }
+                  }}
+                >
+                  <Text style={styles.masterTestBtnText}>⚡ Test Scan Master QR</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
           {/* BATCH RESULTS GRID */}
           {generatedBatchPasses.length > 0 && (
             <View style={styles.batchResultsCard}>
@@ -629,7 +944,22 @@ export default function TemporaryEventPassGenerator({ onTestScanAtGate }) {
                   </Text>
                 </View>
 
+                {/* 4 DOWNLOAD BUTTONS ROW */}
                 <View style={styles.batchActionsRow}>
+                  {/* 1. PDF DOWNLOAD BUTTON */}
+                  <TouchableOpacity
+                    style={styles.pdfDownloadBtn}
+                    onPress={handleDownloadClassPdf}
+                    disabled={isGeneratingPdf}
+                  >
+                    {isGeneratingPdf ? (
+                      <ActivityIndicator color="#FFFFFF" size="small" />
+                    ) : (
+                      <Text style={styles.pdfDownloadBtnText}>📄 Download Whole Class (PDF)</Text>
+                    )}
+                  </TouchableOpacity>
+
+                  {/* 2. ZIP DOWNLOAD BUTTON */}
                   <TouchableOpacity
                     style={styles.zipDownloadBtn}
                     onPress={handleDownloadAllQrZip}
@@ -642,26 +972,20 @@ export default function TemporaryEventPassGenerator({ onTestScanAtGate }) {
                     )}
                   </TouchableOpacity>
 
+                  {/* 3. CSV EXCEL EXPORT */}
                   <TouchableOpacity
                     style={styles.exportCsvBtn}
                     onPress={handleExportBatchToCsv}
                   >
                     <Text style={styles.exportCsvBtnText}>📊 Export CSV / Excel</Text>
                   </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.printAllBtn}
-                    onPress={handlePrintBatch}
-                  >
-                    <Text style={styles.printAllBtnText}>🖨️ Print Badges Sheet</Text>
-                  </TouchableOpacity>
                 </View>
               </View>
 
-              {/* ZIP Progress Message */}
-              {zipProgressMsg ? (
+              {/* Status Progress Banner */}
+              {statusProgressMsg ? (
                 <View style={styles.zipBanner}>
-                  <Text style={styles.zipBannerText}>{zipProgressMsg}</Text>
+                  <Text style={styles.zipBannerText}>{statusProgressMsg}</Text>
                 </View>
               ) : null}
 
@@ -691,7 +1015,6 @@ export default function TemporaryEventPassGenerator({ onTestScanAtGate }) {
                     {/* QR Code */}
                     <View style={styles.batchQrContainer}>
                       <QRCodeRenderer
-                        id={`batch-qr-svg-${item.payload.hall_ticket_number}`}
                         value={item.tokenString}
                         size={Platform.OS === 'web' ? 140 : 120}
                         color="#000000"
@@ -1257,6 +1580,93 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     textAlign: 'center',
   },
+  masterClassCard: {
+    backgroundColor: '#0F172A',
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: '#F59E0B',
+    padding: 16,
+    alignItems: 'center',
+    shadowColor: '#F59E0B',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+  },
+  masterBadgeHeader: {
+    alignItems: 'center',
+    width: '100%',
+    marginBottom: 12,
+  },
+  masterTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
+  masterBadgeLabel: {
+    color: '#F59E0B',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  masterEventTitle: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#FFFFFF',
+    marginTop: 2,
+  },
+  masterCountText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#34D399',
+    marginTop: 2,
+  },
+  masterQrContainer: {
+    backgroundColor: '#FFFFFF',
+    padding: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginVertical: 10,
+  },
+  masterScanHint: {
+    color: '#475569',
+    fontSize: 8,
+    fontWeight: '800',
+    marginTop: 6,
+    textAlign: 'center',
+    maxWidth: 240,
+  },
+  masterActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    width: '100%',
+    maxWidth: 420,
+    marginTop: 10,
+  },
+  masterPosterBtn: {
+    flex: 1,
+    backgroundColor: '#D97706',
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  masterPosterBtnText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  masterTestBtn: {
+    flex: 1,
+    backgroundColor: '#10B981',
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  masterTestBtnText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '900',
+  },
   batchResultsCard: {
     backgroundColor: colors.surface,
     padding: 16,
@@ -1285,6 +1695,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
+  },
+  pdfDownloadBtn: {
+    backgroundColor: '#DC2626',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  pdfDownloadBtnText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '900',
   },
   zipDownloadBtn: {
     backgroundColor: '#3B82F6',
@@ -1326,17 +1750,6 @@ const styles = StyleSheet.create({
     color: '#60A5FA',
     fontSize: 9,
     fontWeight: '800',
-  },
-  printAllBtn: {
-    backgroundColor: '#10B981',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 6,
-  },
-  printAllBtnText: {
-    color: '#FFFFFF',
-    fontSize: 9,
-    fontWeight: '900',
   },
   searchBar: {
     backgroundColor: '#090D16',

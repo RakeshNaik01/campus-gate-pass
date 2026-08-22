@@ -170,7 +170,7 @@ async def verify_gate_entry(request: Request, background_tasks: BackgroundTasks)
         gate_direction = str(token_dict.get("gate_direction") or "BOTH").upper()
         token_id = token_dict.get("token_id")
         is_single_use = bool(token_dict.get("is_single_use", True if token_id else False))
-        is_event_pass = pass_type in ("EVENT", "TEMPORARY", "BATCH", "GATE_PASS") or "event_id" in token_dict or "valid_till" in token_dict
+        is_event_pass = pass_type in ("EVENT", "TEMPORARY", "BATCH", "BATCH_MASTER", "GATE_PASS") or "event_id" in token_dict or "valid_till" in token_dict
         sig = token_dict.get("signature", "")
 
         cursor.execute("SELECT * FROM users WHERE hall_ticket_number = ?", (htn,))
@@ -199,7 +199,7 @@ async def verify_gate_entry(request: Request, background_tasks: BackgroundTasks)
                 valid_from_str = token_dict.get("valid_from")
                 valid_till_str = token_dict.get("valid_till")
                 event_name = token_dict.get("event_name") or token_dict.get("event_id") or "Hackathon / Campus Event"
-                p_name = token_dict.get("participant_name") or (user_row["student_name"] if user_row else "Event Participant")
+                p_name = token_dict.get("participant_name") or (f"CLASS MASTER ({token_dict.get('student_count')} Students)" if token_dict.get("student_count") else (user_row["student_name"] if user_row else "Event Participant"))
 
                 valid_from = parse_iso_datetime(valid_from_str) if valid_from_str else datetime.now(timezone.utc)
                 valid_till = parse_iso_datetime(valid_till_str) if valid_till_str else datetime.now(timezone.utc)

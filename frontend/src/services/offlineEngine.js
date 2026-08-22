@@ -184,7 +184,7 @@ export function verifyGateEntryOffline(payload) {
     const gateDirection = (tokenDict.gate_direction || 'BOTH').toUpperCase();
     const tokenId = tokenDict.token_id;
     const isSingleUse = Boolean(tokenDict.is_single_use || tokenId);
-    const isEventPass = ['EVENT', 'TEMPORARY', 'BATCH', 'GATE_PASS'].includes(passType) || Boolean(tokenDict.event_id) || Boolean(tokenDict.valid_till);
+    const isEventPass = ['EVENT', 'TEMPORARY', 'BATCH', 'BATCH_MASTER', 'GATE_PASS'].includes(passType) || Boolean(tokenDict.event_id) || Boolean(tokenDict.valid_till);
     
     matchedUser = users.find((u) => u.hall_ticket_number === htn || (u.adm_no && u.adm_no.toLowerCase() === htn.toLowerCase()));
 
@@ -211,7 +211,7 @@ export function verifyGateEntryOffline(payload) {
         const validFrom = tokenDict.valid_from ? new Date(tokenDict.valid_from) : null;
         const validTill = new Date(tokenDict.valid_till);
         const eventName = tokenDict.event_name || tokenDict.event_id || 'Hackathon / Event';
-        const pName = tokenDict.participant_name || (matchedUser ? matchedUser.student_name : 'Event Participant');
+        const pName = tokenDict.participant_name || (tokenDict.student_count ? `CLASS MASTER (${tokenDict.student_count} Students)` : (matchedUser ? matchedUser.student_name : 'Event Participant'));
 
         if (now > validTill) {
           result = {
