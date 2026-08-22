@@ -24,7 +24,7 @@ const INITIAL_BASELINE_USERS = [
 ];
 
 export function getLocalUsers() {
-  if (typeof window === 'undefined') return INITIAL_BASELINE_USERS;
+  if (typeof localStorage === 'undefined') return INITIAL_BASELINE_USERS;
   try {
     const raw = localStorage.getItem(USERS_KEY);
     if (!raw) {
@@ -38,7 +38,7 @@ export function getLocalUsers() {
 }
 
 export function saveLocalUsers(users) {
-  if (typeof window === 'undefined') return;
+  if (typeof localStorage === 'undefined') return;
   try {
     localStorage.setItem(USERS_KEY, JSON.stringify(users));
   } catch (e) {
@@ -73,7 +73,7 @@ export function saveSingleLocalUser(userData) {
   if (idx >= 0) {
     users[idx] = newEntry;
   } else {
-    users.unshift(newEntry);
+    users.push(newEntry);
   }
 
   saveLocalUsers(users);
@@ -82,7 +82,7 @@ export function saveSingleLocalUser(userData) {
 
 export function updateSingleLocalUserStatus(htn, newStatus) {
   const users = getLocalUsers();
-  const user = users.find((u) => u.hall_ticket_number === htn);
+  const user = users.find((u) => u.hall_ticket_number === htn || u.adm_no === htn);
   if (!user) {
     throw new Error('User not found in local registry');
   }
@@ -94,7 +94,7 @@ export function updateSingleLocalUserStatus(htn, newStatus) {
 export function deleteSingleLocalUser(htn) {
   let users = getLocalUsers();
   const initialLen = users.length;
-  users = users.filter((u) => u.hall_ticket_number !== htn);
+  users = users.filter((u) => u.hall_ticket_number !== htn && u.adm_no !== htn);
   if (users.length === initialLen) {
     throw new Error('User not found in local registry');
   }
@@ -103,7 +103,7 @@ export function deleteSingleLocalUser(htn) {
 }
 
 export function getLocalAuditLogs() {
-  if (typeof window === 'undefined') return [];
+  if (typeof localStorage === 'undefined') return [];
   try {
     const raw = localStorage.getItem(LOGS_KEY);
     return raw ? JSON.parse(raw) : [];
@@ -113,7 +113,7 @@ export function getLocalAuditLogs() {
 }
 
 export function appendLocalAuditLog(logEntry) {
-  if (typeof window === 'undefined') return;
+  if (typeof localStorage === 'undefined') return;
   try {
     const logs = getLocalAuditLogs();
     logs.unshift(logEntry);
