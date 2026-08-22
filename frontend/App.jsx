@@ -16,7 +16,6 @@ import VerificationOverlay from './src/components/VerificationOverlay';
 import MobileRemoteLensView from './src/components/MobileRemoteLensView';
 import {
   verifyGateEntry,
-  getNetworkStatus,
   getClientModePreference,
   setClientModePreference,
   flushSyncQueue,
@@ -29,7 +28,7 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState(new Date().toLocaleTimeString());
   const [remoteSessionId, setRemoteSessionId] = useState(null);
 
-  // Explicit User-Selected Mode ('ONLINE' vs 'OFFLINE')
+  // Explicit Manual Mode: 'ONLINE' or 'OFFLINE'
   const [appMode, setAppMode] = useState(getClientModePreference());
   const [modeBannerMsg, setModeBannerMsg] = useState(null);
 
@@ -66,23 +65,24 @@ export default function App() {
     };
   }, []);
 
-  const handleToggleMode = async () => {
-    const nextMode = appMode === 'ONLINE' ? 'OFFLINE' : 'ONLINE';
-    setAppMode(nextMode);
-    setClientModePreference(nextMode);
+  const handleSetMode = async (selectedMode) => {
+    if (appMode === selectedMode) return;
 
-    if (nextMode === 'ONLINE') {
-      setModeBannerMsg('🟢 Switched to ONLINE MODE — Connected to Cloud Server & Notification Dispatcher');
+    setAppMode(selectedMode);
+    setClientModePreference(selectedMode);
+
+    if (selectedMode === 'ONLINE') {
+      setModeBannerMsg('🟢 ONLINE MODE ACTIVATED: Live Cloud Verification & Twilio SMS/Email Dispatchers Active');
       try {
         await flushSyncQueue();
       } catch (e) {}
     } else {
-      setModeBannerMsg('🟠 Switched to OFFLINE MODE — Running 100% on Device Memory (Zero Internet Needed)');
+      setModeBannerMsg('🟠 OFFLINE MODE ACTIVATED: Running 100% on Phone Storage (Zero Internet/Laptop Needed)');
     }
 
     setTimeout(() => {
       setModeBannerMsg(null);
-    }, 4000);
+    }, 4500);
   };
 
   const handleInstallClick = async () => {
@@ -148,16 +148,16 @@ export default function App() {
       <StatusBar barStyle="light-content" backgroundColor={colors.background} />
 
       <View style={styles.container}>
-        {/* Top Operational Header */}
+        {/* Top Header */}
         <View style={styles.topHeader}>
           <View style={styles.brandingRow}>
             <View style={styles.campusBadge}>
               <Text style={styles.campusBadgeText}>CAMPUS GATEWAY</Text>
             </View>
-            <Text style={styles.systemTitle}>Security Gate Console</Text>
+            <Text style={styles.systemTitle}>Security Access Terminal</Text>
           </View>
 
-          <View style={styles.headerStatusRow}>
+          <View style={styles.headerRightRow}>
             {/* Install App Button */}
             <TouchableOpacity
               style={styles.installBtn}
@@ -167,36 +167,64 @@ export default function App() {
               <Text style={styles.installBtnText}>📲 INSTALL APP</Text>
             </TouchableOpacity>
 
-            {/* INTERACTIVE MODE TOGGLE BUTTON */}
-            <TouchableOpacity
-              style={[
-                styles.modeToggleBtn,
-                isOnlineMode ? styles.modeOnlineBtn : styles.modeOfflineBtn,
-              ]}
-              activeOpacity={0.7}
-              onPress={handleToggleMode}
-            >
-              <View
-                style={[
-                  styles.modeDot,
-                  { backgroundColor: isOnlineMode ? colors.emerald.light : '#F59E0B' },
-                ]}
-              />
-              <Text
-                style={[
-                  styles.modeToggleText,
-                  { color: isOnlineMode ? colors.emerald.light : '#F59E0B' },
-                ]}
-              >
-                {isOnlineMode ? '🟢 ONLINE' : '🟠 OFFLINE'}
-              </Text>
-              <Text style={styles.switchHintText}>⇄ SWITCH</Text>
-            </TouchableOpacity>
-
             {/* Digital Clock */}
             <View style={styles.clockBadge}>
               <Text style={styles.clockText}>{currentTime}</Text>
             </View>
+          </View>
+        </View>
+
+        {/* EXPLICIT 2-BUTTON MANUAL MODE SWITCHER BAR */}
+        <View style={styles.modeControlBar}>
+          <Text style={styles.modeBarLabel}>MANUAL MODE SELECTOR:</Text>
+          <View style={styles.modeButtonGroup}>
+            <TouchableOpacity
+              style={[
+                styles.modeOptionBtn,
+                isOnlineMode ? styles.modeOptionBtnOnlineActive : styles.modeOptionBtnInactive,
+              ]}
+              activeOpacity={0.85}
+              onPress={() => handleSetMode('ONLINE')}
+            >
+              <View
+                style={[
+                  styles.modeDotIndicator,
+                  { backgroundColor: isOnlineMode ? '#10B981' : '#64748B' },
+                ]}
+              />
+              <Text
+                style={[
+                  styles.modeOptionText,
+                  isOnlineMode ? styles.modeOptionTextOnlineActive : styles.modeOptionTextInactive,
+                ]}
+              >
+                🟢 ONLINE (CLOUD)
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.modeOptionBtn,
+                !isOnlineMode ? styles.modeOptionBtnOfflineActive : styles.modeOptionBtnInactive,
+              ]}
+              activeOpacity={0.85}
+              onPress={() => handleSetMode('OFFLINE')}
+            >
+              <View
+                style={[
+                  styles.modeDotIndicator,
+                  { backgroundColor: !isOnlineMode ? '#F59E0B' : '#64748B' },
+                ]}
+              />
+              <Text
+                style={[
+                  styles.modeOptionText,
+                  !isOnlineMode ? styles.modeOptionTextOfflineActive : styles.modeOptionTextInactive,
+                ]}
+              >
+                🟠 OFFLINE (LOCAL)
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -274,7 +302,7 @@ export default function App() {
               onVerify={handleVerify}
               isProcessing={isProcessing}
               appMode={appMode}
-              onToggleMode={handleToggleMode}
+              onSetMode={handleSetMode}
             />
           )}
 
@@ -375,7 +403,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: colors.textPrimary,
   },
-  headerStatusRow: {
+  headerRightRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
@@ -385,7 +413,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.primaryLight,
     paddingHorizontal: 8,
-    paddingVertical: 5,
+    paddingVertical: 4,
     borderRadius: 6,
   },
   installBtnText: {
@@ -394,43 +422,10 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     letterSpacing: 0.5,
   },
-  modeToggleBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 9,
-    paddingVertical: 5,
-    borderRadius: 8,
-    borderWidth: 1.5,
-    gap: 5,
-  },
-  modeOnlineBtn: {
-    backgroundColor: 'rgba(16, 185, 129, 0.2)',
-    borderColor: colors.emerald.light,
-  },
-  modeOfflineBtn: {
-    backgroundColor: 'rgba(245, 158, 11, 0.2)',
-    borderColor: '#F59E0B',
-  },
-  modeDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 3.5,
-  },
-  modeToggleText: {
-    fontSize: 10,
-    fontWeight: '900',
-    letterSpacing: 0.5,
-  },
-  switchHintText: {
-    fontSize: 8,
-    color: colors.textMuted,
-    fontWeight: '800',
-    marginLeft: 2,
-  },
   clockBadge: {
     backgroundColor: colors.cardBg,
     paddingHorizontal: 8,
-    paddingVertical: 5,
+    paddingVertical: 4,
     borderRadius: 6,
     borderWidth: 1,
     borderColor: colors.border,
@@ -440,6 +435,71 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  modeControlBar: {
+    backgroundColor: '#0F172A',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  modeBarLabel: {
+    fontSize: 9,
+    fontWeight: '900',
+    color: colors.textMuted,
+    letterSpacing: 0.5,
+  },
+  modeButtonGroup: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  modeOptionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    gap: 5,
+  },
+  modeOptionBtnOnlineActive: {
+    backgroundColor: 'rgba(16, 185, 129, 0.25)',
+    borderColor: '#10B981',
+  },
+  modeOptionBtnOfflineActive: {
+    backgroundColor: 'rgba(245, 158, 11, 0.25)',
+    borderColor: '#F59E0B',
+  },
+  modeOptionBtnInactive: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    opacity: 0.6,
+  },
+  modeDotIndicator: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  modeOptionText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  modeOptionTextOnlineActive: {
+    color: '#34D399',
+    fontWeight: '900',
+  },
+  modeOptionTextOfflineActive: {
+    color: '#FBBF24',
+    fontWeight: '900',
+  },
+  modeOptionTextInactive: {
+    color: colors.textMuted,
   },
   modeBanner: {
     paddingVertical: 6,

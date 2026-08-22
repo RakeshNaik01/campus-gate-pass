@@ -16,7 +16,7 @@ import { getNetworkStatus, toggleNetworkStatus } from '../services/api';
 import WebCameraStream from './WebCameraStream';
 import MobileCameraModal from './MobileCameraModal';
 
-export default function ScannerView({ onVerify, isProcessing, appMode = 'ONLINE', onToggleMode }) {
+export default function ScannerView({ onVerify, isProcessing, appMode = 'ONLINE', onSetMode }) {
   const [scanMode, setScanMode] = useState('QR'); // 'QR' or 'OCR'
   const [manualInput, setManualInput] = useState('');
   const [scannedRecent, setScannedRecent] = useState(false);
@@ -52,28 +52,51 @@ export default function ScannerView({ onVerify, isProcessing, appMode = 'ONLINE'
 
   return (
     <View style={styles.container}>
-      {/* Top Station & Network Mode Switcher Bar */}
+      {/* Explicit 2-Button Manual Mode Selector Bar */}
       <View style={styles.networkBanner}>
         <View style={styles.netInfo}>
-          <View
-            style={[
-              styles.netDot,
-              { backgroundColor: isOnlineMode ? colors.emerald.light : '#F59E0B' },
-            ]}
-          />
           <Text style={styles.netText}>
-            CURRENT MODE: {isOnlineMode ? '🟢 ONLINE (Cloud & Alerts Active)' : '🟠 OFFLINE (Device Memory & Queue)'}
+            GATE MODE: {isOnlineMode ? '🟢 ONLINE (Cloud Sync)' : '🟠 OFFLINE (Phone Memory)'}
           </Text>
         </View>
 
-        <TouchableOpacity
-          style={[styles.toggleNetBtn, isOnlineMode ? styles.toggleOffline : styles.toggleOnline]}
-          onPress={onToggleMode}
-        >
-          <Text style={styles.toggleNetBtnText}>
-            {isOnlineMode ? '🟠 Switch to OFFLINE' : '🟢 Switch to ONLINE'}
-          </Text>
-        </TouchableOpacity>
+        <View style={styles.bannerBtnGroup}>
+          <TouchableOpacity
+            style={[
+              styles.choiceBtn,
+              isOnlineMode ? styles.choiceBtnOnlineActive : styles.choiceBtnInactive,
+            ]}
+            onPress={() => onSetMode && onSetMode('ONLINE')}
+            activeOpacity={0.85}
+          >
+            <Text
+              style={[
+                styles.choiceBtnText,
+                isOnlineMode ? styles.choiceBtnTextOnline : styles.choiceBtnTextInactive,
+              ]}
+            >
+              🟢 ONLINE
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.choiceBtn,
+              !isOnlineMode ? styles.choiceBtnOfflineActive : styles.choiceBtnInactive,
+            ]}
+            onPress={() => onSetMode && onSetMode('OFFLINE')}
+            activeOpacity={0.85}
+          >
+            <Text
+              style={[
+                styles.choiceBtnText,
+                !isOnlineMode ? styles.choiceBtnTextOffline : styles.choiceBtnTextInactive,
+              ]}
+            >
+              🟠 OFFLINE
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Mode Switcher: "Scan QR Code" vs "Scan Physical ID Card (OCR)" */}
@@ -253,25 +276,43 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: colors.textPrimary,
   },
-  toggleNetBtn: {
-    paddingHorizontal: 10,
+  bannerBtnGroup: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  choiceBtn: {
+    paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
+    borderWidth: 1.5,
   },
-  toggleOffline: {
-    backgroundColor: 'rgba(239, 68, 68, 0.2)',
-    borderWidth: 1,
-    borderColor: colors.crimson.light,
+  choiceBtnOnlineActive: {
+    backgroundColor: 'rgba(16, 185, 129, 0.25)',
+    borderColor: '#10B981',
   },
-  toggleOnline: {
-    backgroundColor: 'rgba(16, 185, 129, 0.2)',
-    borderWidth: 1,
-    borderColor: colors.emerald.light,
+  choiceBtnOfflineActive: {
+    backgroundColor: 'rgba(245, 158, 11, 0.25)',
+    borderColor: '#F59E0B',
   },
-  toggleNetBtnText: {
-    fontSize: 10,
+  choiceBtnInactive: {
+    backgroundColor: '#0F172A',
+    borderColor: colors.border,
+    opacity: 0.5,
+  },
+  choiceBtnText: {
+    fontSize: 9,
     fontWeight: '800',
-    color: colors.textPrimary,
+  },
+  choiceBtnTextOnline: {
+    color: '#34D399',
+    fontWeight: '900',
+  },
+  choiceBtnTextOffline: {
+    color: '#FBBF24',
+    fontWeight: '900',
+  },
+  choiceBtnTextInactive: {
+    color: colors.textMuted,
   },
   modeSwitcher: {
     flexDirection: 'row',
