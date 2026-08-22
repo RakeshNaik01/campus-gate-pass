@@ -167,111 +167,146 @@ async def verify_gate_entry(request: Request, background_tasks: BackgroundTasks)
     if is_json and token_dict:
         htn = token_dict.get("hall_ticket_number") or token_dict.get("uid", "")
         pass_type = str(token_dict.get("pass_type") or token_dict.get("type") or "").upper()
-        is_event_pass = pass_type == "EVENT" or "event_id" in token_dict or "valid_till" in token_dict
+        gate_direction = str(token_dict.get("gate_direction") or "BOTH").upper()
+        token_id = token_dict.get("token_id")
+        is_single_use = bool(token_dict.get("is_single_use", True if token_id else False))
+        is_event_pass = pass_type in ("EVENT", "TEMPORARY", "BATCH", "GATE_PASS") or "event_id" in token_dict or "valid_till" in token_dict
         sig = token_dict.get("signature", "")
 
         cursor.execute("SELECT * FROM users WHERE hall_ticket_number = ?", (htn,))
         user_row = cursor.fetchone()
 
-        if is_event_pass and token_dict.get("valid_till"):
-            valid_from_str = token_dict.get("valid_from")
-            valid_till_str = token_dict.get("valid_till")
-            event_name = token_dict.get("event_name") or token_dict.get("event_id") or "Hackathon / Campus Event"
-            p_name = token_dict.get("participant_name") or (user_row["student_name"] if user_row else "Event Participant")
-
-            valid_from = parse_iso_datetime(valid_from_str) if valid_from_str else datetime.now(timezone.utc)
-            valid_till = parse_iso_datetime(valid_till_str) if valid_till_str else datetime.now(timezone.utc)
-            now = datetime.now(timezone.utc)
-
-            if now > valid_till:
+        # Check Single-Use Token Burn (One-Time Scan Policy)
+        if token_id and is_single_use:
+            cursor.execute("SELECT * FROM used_single_use_tokens WHERE token_id = ?", (token_id,))
+            used_row = cursor.fetchone()
+            if used_row:
+                p_name = token_dict.get("participant_name") or (user_row["student_name"] if user_row else "Student")
+                event_name = token_dict.get("event_name") or token_dict.get("event_id") or "Temporary Pass"
+                dir_label = "GATE-IN" if gate_direction == "GATE_IN" else ("GATE-OUT" if gate_direction == "GATE_OUT" else "TEMPORARY")
                 result = GateVerificationResponse(
                     status="NOT VERIFIED",
                     name=p_name,
-                    course=f"Event: {event_name}",
-                    hall_ticket_number=htn or "EVENT-PASS",
+                    course=f"Pass: {event_name}",
+                    hall_ticket_number=htn or "N/A",
                     adm_no=user_row["adm_no"] if user_row else "GUEST",
-                    reason=f"Event Pass Expired for {event_name}",
+                    reason=f"Single-Use {dir_label} Pass Already Used (Scanned at {used_row['scanned_at']})",
                     notification_status="NONE"
                 )
-            elif now < valid_from:
+
+        if not result:
+            if is_event_pass and token_dict.get("valid_till"):
+                valid_from_str = token_dict.get("valid_from")
+                valid_till_str = token_dict.get("valid_till")
+                event_name = token_dict.get("event_name") or token_dict.get("event_id") or "Hackathon / Campus Event"
+                p_name = token_dict.get("participant_name") or (user_row["student_name"] if user_row else "Event Participant")
+
+                valid_from = parse_iso_datetime(valid_from_str) if valid_from_str else datetime.now(timezone.utc)
+                valid_till = parse_iso_datetime(valid_till_str) if valid_till_str else datetime.now(timezone.utc)
+                now = datetime.now(timezone.utc)
+
+                if now > valid_till:
+                    result = GateVerificationResponse(
+                        status="NOT VERIFIED",
+                        name=p_name,
+                        course=f"Event: {event_name}",
+                        hall_ticket_number=htn or "EVENT-PASS",
+                        adm_no=user_row["adm_no"] if user_row else "GUEST",
+                        reason=f"Event Pass Expired for {event_name}",
+                        notification_status="NONE"
+                    )
+                elif now < valid_from:
+                    result = GateVerificationResponse(
+                        status="NOT VERIFIED",
+                        name=p_name,
+                        course=f"Event: {event_name}",
+                        hall_ticket_number=htn or "EVENT-PASS",
+                        adm_no=user_row["adm_no"] if user_row else "GUEST",
+                        reason=f"Event Pass Not Yet Active for {event_name}",
+                        notification_status="NONE"
+                    )
+                elif user_row and user_row["status"] == "SUSPENDED":
+                    result = GateVerificationResponse(
+                        status="NOT VERIFIED",
+                        name=user_row["student_name"],
+                        course=f"Event: {event_name}",
+                        hall_ticket_number=user_row["hall_ticket_number"],
+                        adm_no=user_row["adm_no"],
+                        reason="Profile Suspended by Administration",
+                        notification_status="NONE"
+                    )
+                else:
+                    matched_user = user_row or {
+                        "student_name": p_name,
+                        "hall_ticket_number": htn or "EVENT-GUEST",
+                        "adm_no": "GUEST-PASS",
+                        "course": f"Event: {event_name}",
+                        "phone_number": "+91",
+                        "email": ""
+                    }
+                    dir_desc = "Gate Entry (GATE-IN)" if gate_direction == "GATE_IN" else ("Gate Exit (GATE-OUT)" if gate_direction == "GATE_OUT" else "Campus Access")
+                    burn_note = " (Burned & Invalidated)" if (token_id and is_single_use) else ""
+                    result = GateVerificationResponse(
+                        status="VERIFIED",
+                        name=p_name,
+                        course=f"Pass: {event_name}",
+                        hall_ticket_number=htn or "EVENT-PASS",
+                        adm_no=user_row["adm_no"] if user_row else "GUEST-PASS",
+                        reason=f"Authorized {dir_desc}{burn_note}",
+                        notification_status="PENDING"
+                    )
+
+                    # Burn Single-Use Token
+                    if token_id and is_single_use:
+                        try:
+                            cursor.execute("""
+                            INSERT OR IGNORE INTO used_single_use_tokens (token_id, hall_ticket_number, participant_name, pass_type, gate_direction, event_name)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                            """, (token_id, htn, p_name, pass_type, gate_direction, event_name))
+                            conn.commit()
+                        except Exception as ex:
+                            print("Error recording used token:", ex)
+            elif not user_row:
                 result = GateVerificationResponse(
                     status="NOT VERIFIED",
-                    name=p_name,
-                    course=f"Event: {event_name}",
-                    hall_ticket_number=htn or "EVENT-PASS",
-                    adm_no=user_row["adm_no"] if user_row else "GUEST",
-                    reason=f"Event Pass Not Yet Active for {event_name}",
+                    name="Unknown",
+                    course="Unknown",
+                    hall_ticket_number=htn or "N/A",
+                    adm_no="N/A",
+                    reason="User Not Found in Registry",
                     notification_status="NONE"
                 )
-            elif user_row and user_row["status"] == "SUSPENDED":
+            elif user_row["status"] == "SUSPENDED":
                 result = GateVerificationResponse(
                     status="NOT VERIFIED",
                     name=user_row["student_name"],
-                    course=f"Event: {event_name}",
+                    course=user_row["course"],
                     hall_ticket_number=user_row["hall_ticket_number"],
                     adm_no=user_row["adm_no"],
                     reason="Profile Suspended by Administration",
                     notification_status="NONE"
                 )
+            elif user_row["status"] == "INACTIVE":
+                result = GateVerificationResponse(
+                    status="NOT VERIFIED",
+                    name=user_row["student_name"],
+                    course=user_row["course"],
+                    hall_ticket_number=user_row["hall_ticket_number"],
+                    adm_no=user_row["adm_no"],
+                    reason="Profile Inactive / Expired Validity",
+                    notification_status="NONE"
+                )
             else:
-                matched_user = user_row or {
-                    "student_name": p_name,
-                    "hall_ticket_number": htn or "EVENT-GUEST",
-                    "adm_no": "GUEST-PASS",
-                    "course": f"Event: {event_name}",
-                    "phone_number": "+91",
-                    "email": ""
-                }
+                matched_user = user_row
                 result = GateVerificationResponse(
                     status="VERIFIED",
-                    name=p_name,
-                    course=f"Event: {event_name}",
-                    hall_ticket_number=htn or "EVENT-PASS",
-                    adm_no=user_row["adm_no"] if user_row else "GUEST-PASS",
-                    reason=f"Valid Temporary Pass: {event_name}",
+                    name=user_row["student_name"],
+                    course=user_row["course"],
+                    hall_ticket_number=user_row["hall_ticket_number"],
+                    adm_no=user_row["adm_no"],
+                    reason="Valid Permanent QR Pass",
                     notification_status="PENDING"
                 )
-        elif not user_row:
-            result = GateVerificationResponse(
-                status="NOT VERIFIED",
-                name="Unknown",
-                course="Unknown",
-                hall_ticket_number=htn or "N/A",
-                adm_no="N/A",
-                reason="User Not Found in Registry",
-                notification_status="NONE"
-            )
-        elif user_row["status"] == "SUSPENDED":
-            result = GateVerificationResponse(
-                status="NOT VERIFIED",
-                name=user_row["student_name"],
-                course=user_row["course"],
-                hall_ticket_number=user_row["hall_ticket_number"],
-                adm_no=user_row["adm_no"],
-                reason="Profile Suspended by Administration",
-                notification_status="NONE"
-            )
-        elif user_row["status"] == "INACTIVE":
-            result = GateVerificationResponse(
-                status="NOT VERIFIED",
-                name=user_row["student_name"],
-                course=user_row["course"],
-                hall_ticket_number=user_row["hall_ticket_number"],
-                adm_no=user_row["adm_no"],
-                reason="Profile Inactive / Expired Validity",
-                notification_status="NONE"
-            )
-        else:
-            matched_user = user_row
-            result = GateVerificationResponse(
-                status="VERIFIED",
-                name=user_row["student_name"],
-                course=user_row["course"],
-                hall_ticket_number=user_row["hall_ticket_number"],
-                adm_no=user_row["adm_no"],
-                reason="Valid Permanent QR Pass",
-                notification_status="PENDING"
-            )
     else:
         # Tier 2: Intelligent Multi-Identifier Physical ID Card Matching
         cursor.execute("SELECT * FROM users")

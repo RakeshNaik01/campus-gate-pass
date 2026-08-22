@@ -82,6 +82,19 @@ def init_db(force_reseed=False):
     );
     """)
 
+    # 5. Used Single-Use Tokens Table (One-Time Scan Policy Enforcement)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS used_single_use_tokens (
+        token_id TEXT PRIMARY KEY,
+        hall_ticket_number TEXT,
+        participant_name TEXT,
+        pass_type TEXT,
+        gate_direction TEXT,
+        event_name TEXT,
+        scanned_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    """)
+
     # Check and Seed ONLY KETAVATH RAKESH NAIK if empty
     cursor.execute("SELECT COUNT(*) FROM users")
     count = cursor.fetchone()[0]

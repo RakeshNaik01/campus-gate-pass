@@ -42,30 +42,50 @@ export default function ScannerView({ onVerify, isProcessing, appMode = 'ONLINE'
   };
 
   const now = new Date();
-  const activeEventToken = JSON.stringify({
-    pass_type: 'EVENT',
-    event_id: 'SIH-2026',
-    event_name: 'Smart India Hackathon 2026',
+  const singleUseGateInToken = JSON.stringify({
+    token_id: `PASS-GATEIN-${Math.floor(1000 + Math.random() * 9000)}`,
+    pass_type: 'TEMPORARY',
+    gate_direction: 'GATE_IN',
+    is_single_use: true,
+    event_id: 'CLASS-ENTRY',
+    event_name: 'Authorized Gate Entry (1-Time)',
     hall_ticket_number: '086256008',
     participant_name: 'KETAVATH RAKESH NAIK',
     valid_from: new Date(now.getTime() - 3600000).toISOString(),
-    valid_till: new Date(now.getTime() + 172800000).toISOString(),
+    valid_till: new Date(now.getTime() + 14400000).toISOString(),
   });
 
-  const expiredEventToken = JSON.stringify({
-    pass_type: 'EVENT',
-    event_id: 'TECHFEST-2025',
-    event_name: 'TechFest Coding Sprint (Past Event)',
+  const singleUseGateOutToken = JSON.stringify({
+    token_id: `PASS-GATEOUT-${Math.floor(1000 + Math.random() * 9000)}`,
+    pass_type: 'TEMPORARY',
+    gate_direction: 'GATE_OUT',
+    is_single_use: true,
+    event_id: 'LUNCH-LEAVE',
+    event_name: 'Official Lunch Departure Permission',
     hall_ticket_number: '086256008',
     participant_name: 'KETAVATH RAKESH NAIK',
-    valid_from: new Date(now.getTime() - 172800000).toISOString(),
-    valid_till: new Date(now.getTime() - 7200000).toISOString(),
+    valid_from: new Date(now.getTime() - 3600000).toISOString(),
+    valid_till: new Date(now.getTime() + 14400000).toISOString(),
+  });
+
+  const burnedUsedToken = JSON.stringify({
+    token_id: 'PASS-ALREADY-BURNED-001',
+    pass_type: 'TEMPORARY',
+    gate_direction: 'GATE_IN',
+    is_single_use: true,
+    event_id: 'OLD-ENTRY',
+    event_name: 'Morning Gate Ingress Pass',
+    hall_ticket_number: '086256008',
+    participant_name: 'KETAVATH RAKESH NAIK',
+    valid_from: new Date(now.getTime() - 3600000).toISOString(),
+    valid_till: new Date(now.getTime() + 14400000).toISOString(),
   });
 
   const presetTestCases = [
     { label: '🎓 Vaagdevi ID: Rakesh (25-5-117)', value: '25-5-117', type: 'DEMO' },
-    { label: '🎟️ Active Hackathon Event Pass', value: activeEventToken, type: 'EVENT_ACTIVE' },
-    { label: '⛔ Expired Hackathon Pass (Denied)', value: expiredEventToken, type: 'EVENT_EXPIRED' },
+    { label: '🟢 Single-Use GATE-IN Pass', value: singleUseGateInToken, type: 'EVENT_ACTIVE' },
+    { label: '🔴 Single-Use GATE-OUT Pass', value: singleUseGateOutToken, type: 'EVENT_ACTIVE' },
+    { label: '⛔ Already Used Pass (2nd Scan Denied)', value: burnedUsedToken, type: 'EVENT_EXPIRED' },
     { label: '🧑‍🎓 Aarav Sharma (086256001)', value: '086256001', type: 'QR' },
     { label: '💳 Priya Patel (25-5-102)', value: '25-5-102', type: 'OCR' },
     { label: '👩‍🏫 Dr. Meera (Dean / Lecturer)', value: 'FAC-25-01', type: 'OCR' },

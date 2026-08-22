@@ -127,6 +127,33 @@ export function appendLocalAuditLog(logEntry) {
 /**
  * Two-Tier Autonomous Offline Gate Verification Engine
  */
+const USED_TOKENS_STORAGE_KEY = 'campus_gate_used_tokens';
+
+export const getUsedTokensOffline = () => {
+  if (typeof localStorage === 'undefined') return {};
+  try {
+    const raw = localStorage.getItem(USED_TOKENS_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (e) {
+    return {};
+  }
+};
+
+export const markTokenUsedOffline = (tokenId, tokenData = {}) => {
+  if (typeof localStorage === 'undefined' || !tokenId) return;
+  try {
+    const tokens = getUsedTokensOffline();
+    tokens[tokenId] = {
+      ...tokenData,
+      scanned_at: new Date().toISOString(),
+      time: new Date().toLocaleTimeString(),
+    };
+    localStorage.setItem(USED_TOKENS_STORAGE_KEY, JSON.stringify(tokens));
+  } catch (e) {
+    console.warn('Could not record used token:', e);
+  }
+};
+
 export function verifyGateEntryOffline(payload) {
   const users = getLocalUsers();
   const payloadStr = typeof payload === 'string' ? payload : JSON.stringify(payload);
@@ -153,97 +180,133 @@ export function verifyGateEntryOffline(payload) {
   if (isJson && tokenDict) {
     // Tier 1: Hidden Primary Key Hall Ticket Number or Event Token
     const htn = tokenDict.hall_ticket_number || tokenDict.uid || '';
-    const isEventPass = tokenDict.pass_type === 'EVENT' || Boolean(tokenDict.event_id) || Boolean(tokenDict.valid_till);
+    const passType = (tokenDict.pass_type || tokenDict.type || '').toUpperCase();
+    const gateDirection = (tokenDict.gate_direction || 'BOTH').toUpperCase();
+    const tokenId = tokenDict.token_id;
+    const isSingleUse = Boolean(tokenDict.is_single_use || tokenId);
+    const isEventPass = ['EVENT', 'TEMPORARY', 'BATCH', 'GATE_PASS'].includes(passType) || Boolean(tokenDict.event_id) || Boolean(tokenDict.valid_till);
+    
     matchedUser = users.find((u) => u.hall_ticket_number === htn || (u.adm_no && u.adm_no.toLowerCase() === htn.toLowerCase()));
 
-    if (isEventPass && tokenDict.valid_till) {
-      const now = new Date();
-      const validFrom = tokenDict.valid_from ? new Date(tokenDict.valid_from) : null;
-      const validTill = new Date(tokenDict.valid_till);
-      const eventName = tokenDict.event_name || tokenDict.event_id || 'Hackathon / Event';
-      const pName = tokenDict.participant_name || (matchedUser ? matchedUser.student_name : 'Event Participant');
+    // 1. Single-Use Check (One-Time Scan Policy)
+    const usedTokens = getUsedTokensOffline();
+    if (tokenId && isSingleUse && usedTokens[tokenId]) {
+      const prevScanned = usedTokens[tokenId];
+      const pName = tokenDict.participant_name || (matchedUser ? matchedUser.student_name : 'Student');
+      const dirLabel = gateDirection === 'GATE_IN' ? 'GATE-IN' : (gateDirection === 'GATE_OUT' ? 'GATE-OUT' : 'TEMPORARY');
+      result = {
+        status: 'NOT VERIFIED',
+        name: pName,
+        course: `Pass: ${tokenDict.event_name || 'Temporary Pass'}`,
+        hall_ticket_number: htn || 'N/A',
+        adm_no: matchedUser ? matchedUser.adm_no : 'GUEST',
+        reason: `Single-Use ${dirLabel} Pass Already Used (Scanned at ${prevScanned.time || 'earlier'})`,
+        notification_status: 'NONE',
+      };
+    }
 
-      if (now > validTill) {
+    if (!result) {
+      if (isEventPass && tokenDict.valid_till) {
+        const now = new Date();
+        const validFrom = tokenDict.valid_from ? new Date(tokenDict.valid_from) : null;
+        const validTill = new Date(tokenDict.valid_till);
+        const eventName = tokenDict.event_name || tokenDict.event_id || 'Hackathon / Event';
+        const pName = tokenDict.participant_name || (matchedUser ? matchedUser.student_name : 'Event Participant');
+
+        if (now > validTill) {
+          result = {
+            status: 'NOT VERIFIED',
+            name: pName,
+            course: `Event: ${eventName}`,
+            hall_ticket_number: htn || 'EVENT-PASS',
+            adm_no: matchedUser ? matchedUser.adm_no : 'GUEST',
+            reason: `Event Pass Expired for ${eventName} at ${validTill.toLocaleTimeString()}`,
+            notification_status: 'NONE',
+          };
+        } else if (validFrom && now < validFrom) {
+          result = {
+            status: 'NOT VERIFIED',
+            name: pName,
+            course: `Event: ${eventName}`,
+            hall_ticket_number: htn || 'EVENT-PASS',
+            adm_no: matchedUser ? matchedUser.adm_no : 'GUEST',
+            reason: `Event Pass Not Yet Active for ${eventName} (Starts ${validFrom.toLocaleTimeString()})`,
+            notification_status: 'NONE',
+          };
+        } else if (matchedUser && matchedUser.status === 'SUSPENDED') {
+          result = {
+            status: 'NOT VERIFIED',
+            name: matchedUser.student_name,
+            course: `Event: ${eventName}`,
+            hall_ticket_number: matchedUser.hall_ticket_number,
+            adm_no: matchedUser.adm_no,
+            reason: 'Profile Suspended by Administration',
+            notification_status: 'NONE',
+          };
+        } else {
+          const dirDesc = gateDirection === 'GATE_IN' ? 'Gate Entry (GATE-IN)' : (gateDirection === 'GATE_OUT' ? 'Gate Exit (GATE-OUT)' : 'Campus Access');
+          const burnNote = (tokenId && isSingleUse) ? ' (Burned & Invalidated)' : '';
+          result = {
+            status: 'VERIFIED',
+            name: pName,
+            course: `Pass: ${eventName}`,
+            hall_ticket_number: htn || 'EVENT-PASS',
+            adm_no: matchedUser ? matchedUser.adm_no : 'GUEST-PASS',
+            reason: `Authorized ${dirDesc}${burnNote}`,
+            notification_status: 'OFFLINE QUEUED',
+          };
+
+          // Burn Single-Use Token on-device
+          if (tokenId && isSingleUse) {
+            markTokenUsedOffline(tokenId, {
+              hall_ticket_number: htn,
+              name: pName,
+              gate_direction: gateDirection,
+              event_name: eventName,
+            });
+          }
+        }
+      } else if (!matchedUser) {
         result = {
           status: 'NOT VERIFIED',
-          name: pName,
-          course: `Event: ${eventName}`,
-          hall_ticket_number: htn || 'EVENT-PASS',
-          adm_no: matchedUser ? matchedUser.adm_no : 'GUEST',
-          reason: `Event Pass Expired for ${eventName} at ${validTill.toLocaleTimeString()}`,
+          name: 'Unknown Student',
+          course: 'Unknown',
+          hall_ticket_number: htn || 'N/A',
+          adm_no: 'N/A',
+          reason: 'User Not Found in Registry',
           notification_status: 'NONE',
         };
-      } else if (validFrom && now < validFrom) {
-        result = {
-          status: 'NOT VERIFIED',
-          name: pName,
-          course: `Event: ${eventName}`,
-          hall_ticket_number: htn || 'EVENT-PASS',
-          adm_no: matchedUser ? matchedUser.adm_no : 'GUEST',
-          reason: `Event Pass Not Yet Active for ${eventName} (Starts ${validFrom.toLocaleTimeString()})`,
-          notification_status: 'NONE',
-        };
-      } else if (matchedUser && matchedUser.status === 'SUSPENDED') {
+      } else if (matchedUser.status === 'SUSPENDED') {
         result = {
           status: 'NOT VERIFIED',
           name: matchedUser.student_name,
-          course: `Event: ${eventName}`,
+          course: matchedUser.course,
           hall_ticket_number: matchedUser.hall_ticket_number,
           adm_no: matchedUser.adm_no,
           reason: 'Profile Suspended by Administration',
           notification_status: 'NONE',
         };
+      } else if (matchedUser.status === 'INACTIVE') {
+        result = {
+          status: 'NOT VERIFIED',
+          name: matchedUser.student_name,
+          course: matchedUser.course,
+          hall_ticket_number: matchedUser.hall_ticket_number,
+          adm_no: matchedUser.adm_no,
+          reason: 'Profile Inactive / Expired Validity',
+          notification_status: 'NONE',
+        };
       } else {
         result = {
           status: 'VERIFIED',
-          name: pName,
-          course: `Event: ${eventName}`,
-          hall_ticket_number: htn || 'EVENT-PASS',
-          adm_no: matchedUser ? matchedUser.adm_no : 'GUEST-PASS',
-          reason: `Valid Temporary Event Pass (${eventName})`,
+          name: matchedUser.student_name,
+          course: matchedUser.course,
+          hall_ticket_number: matchedUser.hall_ticket_number,
+          adm_no: matchedUser.adm_no,
+          reason: 'Valid Permanent QR Pass (Offline Verified)',
           notification_status: 'OFFLINE QUEUED',
         };
       }
-    } else if (!matchedUser) {
-      result = {
-        status: 'NOT VERIFIED',
-        name: 'Unknown Student',
-        course: 'Unknown',
-        hall_ticket_number: htn || 'N/A',
-        adm_no: 'N/A',
-        reason: 'User Not Found in Registry',
-        notification_status: 'NONE',
-      };
-    } else if (matchedUser.status === 'SUSPENDED') {
-      result = {
-        status: 'NOT VERIFIED',
-        name: matchedUser.student_name,
-        course: matchedUser.course,
-        hall_ticket_number: matchedUser.hall_ticket_number,
-        adm_no: matchedUser.adm_no,
-        reason: 'Profile Suspended by Administration',
-        notification_status: 'NONE',
-      };
-    } else if (matchedUser.status === 'INACTIVE') {
-      result = {
-        status: 'NOT VERIFIED',
-        name: matchedUser.student_name,
-        course: matchedUser.course,
-        hall_ticket_number: matchedUser.hall_ticket_number,
-        adm_no: matchedUser.adm_no,
-        reason: 'Profile Inactive / Expired Validity',
-        notification_status: 'NONE',
-      };
-    } else {
-      result = {
-        status: 'VERIFIED',
-        name: matchedUser.student_name,
-        course: matchedUser.course,
-        hall_ticket_number: matchedUser.hall_ticket_number,
-        adm_no: matchedUser.adm_no,
-        reason: 'Valid Permanent QR Pass (Offline Verified)',
-        notification_status: 'OFFLINE QUEUED',
-      };
     }
   } else {
     // Tier 2: Intelligent Multi-Identifier Physical ID Card Matching
