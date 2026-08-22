@@ -41,13 +41,35 @@ export default function ScannerView({ onVerify, isProcessing, appMode = 'ONLINE'
     setManualInput('');
   };
 
+  const now = new Date();
+  const activeEventToken = JSON.stringify({
+    pass_type: 'EVENT',
+    event_id: 'SIH-2026',
+    event_name: 'Smart India Hackathon 2026',
+    hall_ticket_number: '086256008',
+    participant_name: 'KETAVATH RAKESH NAIK',
+    valid_from: new Date(now.getTime() - 3600000).toISOString(),
+    valid_till: new Date(now.getTime() + 172800000).toISOString(),
+  });
+
+  const expiredEventToken = JSON.stringify({
+    pass_type: 'EVENT',
+    event_id: 'TECHFEST-2025',
+    event_name: 'TechFest Coding Sprint (Past Event)',
+    hall_ticket_number: '086256008',
+    participant_name: 'KETAVATH RAKESH NAIK',
+    valid_from: new Date(now.getTime() - 172800000).toISOString(),
+    valid_till: new Date(now.getTime() - 7200000).toISOString(),
+  });
+
   const presetTestCases = [
     { label: '🎓 Vaagdevi ID: Rakesh (25-5-117)', value: '25-5-117', type: 'DEMO' },
+    { label: '🎟️ Active Hackathon Event Pass', value: activeEventToken, type: 'EVENT_ACTIVE' },
+    { label: '⛔ Expired Hackathon Pass (Denied)', value: expiredEventToken, type: 'EVENT_EXPIRED' },
     { label: '🧑‍🎓 Aarav Sharma (086256001)', value: '086256001', type: 'QR' },
     { label: '💳 Priya Patel (25-5-102)', value: '25-5-102', type: 'OCR' },
     { label: '👩‍🏫 Dr. Meera (Dean / Lecturer)', value: 'FAC-25-01', type: 'OCR' },
     { label: '🚫 Vikram Malhotra (Suspended)', value: '25-5-105', type: 'SUSPENDED' },
-    { label: '❓ Unrecognized Card', value: '99-9-999', type: 'UNREG' },
   ];
 
   return (
@@ -211,6 +233,8 @@ export default function ScannerView({ onVerify, isProcessing, appMode = 'ONLINE'
               style={[
                 styles.testCardButton,
                 item.type === 'DEMO' && styles.testCardButtonDemo,
+                item.type === 'EVENT_ACTIVE' && styles.testCardButtonEvent,
+                item.type === 'EVENT_EXPIRED' && styles.testCardButtonExpired,
               ]}
               activeOpacity={0.7}
               onPress={() => handleOcrSubmit(item.value)}
@@ -220,11 +244,15 @@ export default function ScannerView({ onVerify, isProcessing, appMode = 'ONLINE'
                 style={[
                   styles.testButtonLabel,
                   item.type === 'DEMO' && styles.testButtonLabelDemo,
+                  item.type === 'EVENT_ACTIVE' && { color: '#60A5FA' },
+                  item.type === 'EVENT_EXPIRED' && { color: '#F87171' },
                 ]}
               >
                 {item.label}
               </Text>
-              <Text style={styles.testButtonValue}>{item.value}</Text>
+              <Text style={styles.testButtonValue}>
+                {item.value.startsWith('{') ? '⚡ Tap to Verify Event Token' : item.value}
+              </Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
@@ -460,6 +488,14 @@ const styles = StyleSheet.create({
   testCardButtonDemo: {
     borderColor: colors.emerald.light,
     backgroundColor: 'rgba(16, 185, 129, 0.15)',
+  },
+  testCardButtonEvent: {
+    borderColor: '#3B82F6',
+    backgroundColor: 'rgba(59, 130, 246, 0.15)',
+  },
+  testCardButtonExpired: {
+    borderColor: '#EF4444',
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
   },
   testButtonLabel: {
     fontSize: 10,

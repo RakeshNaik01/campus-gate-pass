@@ -151,11 +151,60 @@ export function verifyGateEntryOffline(payload) {
   const scanType = isJson ? 'QR Code' : 'Card OCR';
 
   if (isJson && tokenDict) {
-    // Tier 1: Hidden Primary Key Hall Ticket Number
+    // Tier 1: Hidden Primary Key Hall Ticket Number or Event Token
     const htn = tokenDict.hall_ticket_number || tokenDict.uid || '';
-    matchedUser = users.find((u) => u.hall_ticket_number === htn);
+    const isEventPass = tokenDict.pass_type === 'EVENT' || Boolean(tokenDict.event_id) || Boolean(tokenDict.valid_till);
+    matchedUser = users.find((u) => u.hall_ticket_number === htn || (u.adm_no && u.adm_no.toLowerCase() === htn.toLowerCase()));
 
-    if (!matchedUser) {
+    if (isEventPass && tokenDict.valid_till) {
+      const now = new Date();
+      const validFrom = tokenDict.valid_from ? new Date(tokenDict.valid_from) : null;
+      const validTill = new Date(tokenDict.valid_till);
+      const eventName = tokenDict.event_name || tokenDict.event_id || 'Hackathon / Event';
+      const pName = tokenDict.participant_name || (matchedUser ? matchedUser.student_name : 'Event Participant');
+
+      if (now > validTill) {
+        result = {
+          status: 'NOT VERIFIED',
+          name: pName,
+          course: `Event: ${eventName}`,
+          hall_ticket_number: htn || 'EVENT-PASS',
+          adm_no: matchedUser ? matchedUser.adm_no : 'GUEST',
+          reason: `Event Pass Expired for ${eventName} at ${validTill.toLocaleTimeString()}`,
+          notification_status: 'NONE',
+        };
+      } else if (validFrom && now < validFrom) {
+        result = {
+          status: 'NOT VERIFIED',
+          name: pName,
+          course: `Event: ${eventName}`,
+          hall_ticket_number: htn || 'EVENT-PASS',
+          adm_no: matchedUser ? matchedUser.adm_no : 'GUEST',
+          reason: `Event Pass Not Yet Active for ${eventName} (Starts ${validFrom.toLocaleTimeString()})`,
+          notification_status: 'NONE',
+        };
+      } else if (matchedUser && matchedUser.status === 'SUSPENDED') {
+        result = {
+          status: 'NOT VERIFIED',
+          name: matchedUser.student_name,
+          course: `Event: ${eventName}`,
+          hall_ticket_number: matchedUser.hall_ticket_number,
+          adm_no: matchedUser.adm_no,
+          reason: 'Profile Suspended by Administration',
+          notification_status: 'NONE',
+        };
+      } else {
+        result = {
+          status: 'VERIFIED',
+          name: pName,
+          course: `Event: ${eventName}`,
+          hall_ticket_number: htn || 'EVENT-PASS',
+          adm_no: matchedUser ? matchedUser.adm_no : 'GUEST-PASS',
+          reason: `Valid Temporary Event Pass (${eventName})`,
+          notification_status: 'OFFLINE QUEUED',
+        };
+      }
+    } else if (!matchedUser) {
       result = {
         status: 'NOT VERIFIED',
         name: 'Unknown Student',

@@ -166,13 +166,72 @@ async def verify_gate_entry(request: Request, background_tasks: BackgroundTasks)
     # 1. Tier 1: QR Payload (JSON Token)
     if is_json and token_dict:
         htn = token_dict.get("hall_ticket_number") or token_dict.get("uid", "")
-        pass_type = token_dict.get("type", "").upper()
+        pass_type = str(token_dict.get("pass_type") or token_dict.get("type") or "").upper()
+        is_event_pass = pass_type == "EVENT" or "event_id" in token_dict or "valid_till" in token_dict
         sig = token_dict.get("signature", "")
 
         cursor.execute("SELECT * FROM users WHERE hall_ticket_number = ?", (htn,))
         user_row = cursor.fetchone()
 
-        if not user_row:
+        if is_event_pass and token_dict.get("valid_till"):
+            valid_from_str = token_dict.get("valid_from")
+            valid_till_str = token_dict.get("valid_till")
+            event_name = token_dict.get("event_name") or token_dict.get("event_id") or "Hackathon / Campus Event"
+            p_name = token_dict.get("participant_name") or (user_row["student_name"] if user_row else "Event Participant")
+
+            valid_from = parse_iso_datetime(valid_from_str) if valid_from_str else datetime.now(timezone.utc)
+            valid_till = parse_iso_datetime(valid_till_str) if valid_till_str else datetime.now(timezone.utc)
+            now = datetime.now(timezone.utc)
+
+            if now > valid_till:
+                result = GateVerificationResponse(
+                    status="NOT VERIFIED",
+                    name=p_name,
+                    course=f"Event: {event_name}",
+                    hall_ticket_number=htn or "EVENT-PASS",
+                    adm_no=user_row["adm_no"] if user_row else "GUEST",
+                    reason=f"Event Pass Expired for {event_name}",
+                    notification_status="NONE"
+                )
+            elif now < valid_from:
+                result = GateVerificationResponse(
+                    status="NOT VERIFIED",
+                    name=p_name,
+                    course=f"Event: {event_name}",
+                    hall_ticket_number=htn or "EVENT-PASS",
+                    adm_no=user_row["adm_no"] if user_row else "GUEST",
+                    reason=f"Event Pass Not Yet Active for {event_name}",
+                    notification_status="NONE"
+                )
+            elif user_row and user_row["status"] == "SUSPENDED":
+                result = GateVerificationResponse(
+                    status="NOT VERIFIED",
+                    name=user_row["student_name"],
+                    course=f"Event: {event_name}",
+                    hall_ticket_number=user_row["hall_ticket_number"],
+                    adm_no=user_row["adm_no"],
+                    reason="Profile Suspended by Administration",
+                    notification_status="NONE"
+                )
+            else:
+                matched_user = user_row or {
+                    "student_name": p_name,
+                    "hall_ticket_number": htn or "EVENT-GUEST",
+                    "adm_no": "GUEST-PASS",
+                    "course": f"Event: {event_name}",
+                    "phone_number": "+91",
+                    "email": ""
+                }
+                result = GateVerificationResponse(
+                    status="VERIFIED",
+                    name=p_name,
+                    course=f"Event: {event_name}",
+                    hall_ticket_number=htn or "EVENT-PASS",
+                    adm_no=user_row["adm_no"] if user_row else "GUEST-PASS",
+                    reason=f"Valid Temporary Pass: {event_name}",
+                    notification_status="PENDING"
+                )
+        elif not user_row:
             result = GateVerificationResponse(
                 status="NOT VERIFIED",
                 name="Unknown",
@@ -203,47 +262,16 @@ async def verify_gate_entry(request: Request, background_tasks: BackgroundTasks)
                 notification_status="NONE"
             )
         else:
-            if pass_type == "EVENT":
-                valid_from_str = token_dict.get("valid_from")
-                valid_till_str = token_dict.get("valid_till")
-                event_id = token_dict.get("event_id", "")
-
-                valid_from = parse_iso_datetime(valid_from_str)
-                valid_till = parse_iso_datetime(valid_till_str)
-                now = datetime.now(timezone.utc)
-
-                if now < valid_from or now > valid_till:
-                    result = GateVerificationResponse(
-                        status="NOT VERIFIED",
-                        name=user_row["student_name"],
-                        course=user_row["course"],
-                        hall_ticket_number=user_row["hall_ticket_number"],
-                        adm_no=user_row["adm_no"],
-                        reason="Temporary Event Pass Expired",
-                        notification_status="NONE"
-                    )
-                else:
-                    matched_user = user_row
-                    result = GateVerificationResponse(
-                        status="VERIFIED",
-                        name=user_row["student_name"],
-                        course=user_row["course"],
-                        hall_ticket_number=user_row["hall_ticket_number"],
-                        adm_no=user_row["adm_no"],
-                        reason=f"Event Pass Verified ({event_id})",
-                        notification_status="PENDING"
-                    )
-            else:
-                matched_user = user_row
-                result = GateVerificationResponse(
-                    status="VERIFIED",
-                    name=user_row["student_name"],
-                    course=user_row["course"],
-                    hall_ticket_number=user_row["hall_ticket_number"],
-                    adm_no=user_row["adm_no"],
-                    reason="Valid Permanent QR Pass",
-                    notification_status="PENDING"
-                )
+            matched_user = user_row
+            result = GateVerificationResponse(
+                status="VERIFIED",
+                name=user_row["student_name"],
+                course=user_row["course"],
+                hall_ticket_number=user_row["hall_ticket_number"],
+                adm_no=user_row["adm_no"],
+                reason="Valid Permanent QR Pass",
+                notification_status="PENDING"
+            )
     else:
         # Tier 2: Intelligent Multi-Identifier Physical ID Card Matching
         cursor.execute("SELECT * FROM users")

@@ -141,6 +141,13 @@ export default function App() {
     );
   }
 
+  const handleTestScanAtGate = (payload) => {
+    setActiveTab('SECTION_1');
+    setTimeout(() => {
+      handleVerify(payload);
+    }, 200);
+  };
+
   const isOnlineMode = appMode === 'ONLINE';
 
   return (
@@ -275,7 +282,7 @@ export default function App() {
                 activeTab === 'SECTION_2' && styles.navTabTextActive,
               ]}
             >
-              🗄️ 2. DATABASE
+              🗄️ 2. DATABASE & EVENTS
             </Text>
           </TouchableOpacity>
 
@@ -306,7 +313,9 @@ export default function App() {
             />
           )}
 
-          {activeTab === 'SECTION_2' && <DatabaseManagementView />}
+          {activeTab === 'SECTION_2' && (
+            <DatabaseManagementView onTestScanAtGate={handleTestScanAtGate} />
+          )}
 
           {activeTab === 'SECTION_3' && <AuditLogsView />}
         </View>

@@ -19,8 +19,9 @@ import {
   deleteUser,
   updateUserStatus,
 } from '../services/api';
+import TemporaryEventPassGenerator from './TemporaryEventPassGenerator';
 
-export default function DatabaseManagementView() {
+export default function DatabaseManagementView({ onTestScanAtGate }) {
   const [activeSubTab, setActiveSubTab] = useState('DIRECTORY'); // Default to directory view
   const [usersList, setUsersList] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -259,7 +260,16 @@ export default function DatabaseManagementView() {
           onPress={() => setActiveSubTab('MANUAL')}
         >
           <Text style={[styles.subTabText, activeSubTab === 'MANUAL' && styles.subTabTextActive]}>
-            ✍️ 3. MANUAL REGISTRATION
+            ✍️ 3. MANUAL REGISTER
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.subTab, styles.subTabEvent, activeSubTab === 'EVENT' && styles.subTabEventActive]}
+          onPress={() => setActiveSubTab('EVENT')}
+        >
+          <Text style={[styles.subTabText, activeSubTab === 'EVENT' && styles.subTabTextEventActive]}>
+            🎟️ 4. EVENT PASS
           </Text>
         </TouchableOpacity>
       </View>
@@ -677,6 +687,13 @@ export default function DatabaseManagementView() {
           </View>
         </ScrollView>
       )}
+
+      {/* SUB-COMPONENT 4: TEMPORARY EVENT PASS GENERATOR */}
+      {activeSubTab === 'EVENT' && (
+        <View style={styles.tabContent}>
+          <TemporaryEventPassGenerator onTestScanAtGate={onTestScanAtGate} />
+        </View>
+      )}
     </View>
   );
 }
@@ -736,13 +753,26 @@ const styles = StyleSheet.create({
   subTabActive: {
     backgroundColor: colors.primary,
   },
+  subTabEvent: {
+    borderColor: 'rgba(245, 158, 11, 0.4)',
+  },
+  subTabEventActive: {
+    backgroundColor: 'rgba(245, 158, 11, 0.25)',
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+  },
   subTabText: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '800',
     color: colors.textSecondary,
   },
   subTabTextActive: {
     color: '#FFFFFF',
+    fontWeight: '900',
+  },
+  subTabTextEventActive: {
+    color: '#FBBF24',
+    fontWeight: '900',
   },
   tabContent: {
     flex: 1,
