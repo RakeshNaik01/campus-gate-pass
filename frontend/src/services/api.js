@@ -26,7 +26,28 @@ async function safeJson(response) {
   }
 }
 
+const MODE_KEY = 'GATEPASS_MODE_PREF_V1';
+
+export function getClientModePreference() {
+  if (typeof window === 'undefined') return 'ONLINE';
+  try {
+    return localStorage.getItem(MODE_KEY) || 'ONLINE';
+  } catch (e) {
+    return 'ONLINE';
+  }
+}
+
+export function setClientModePreference(mode) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(MODE_KEY, mode);
+  } catch (e) {}
+}
+
 export async function createMobileScanSession() {
+  if (getClientModePreference() === 'OFFLINE') {
+    return { session_id: 'SCAN-LOCAL', status: 'ACTIVE' };
+  }
   try {
     const res = await fetch(`${API_BASE_URL}/mobile-session/create`, { method: 'POST' });
     return await safeJson(res);
@@ -36,6 +57,9 @@ export async function createMobileScanSession() {
 }
 
 export async function pollMobileScanSession(sessionId) {
+  if (getClientModePreference() === 'OFFLINE') {
+    return { scanned: false };
+  }
   try {
     const res = await fetch(`${API_BASE_URL}/mobile-session/poll/${sessionId}`);
     return await safeJson(res);
@@ -45,6 +69,9 @@ export async function pollMobileScanSession(sessionId) {
 }
 
 export async function submitMobileScan(sessionId, payload) {
+  if (getClientModePreference() === 'OFFLINE') {
+    return verifyGateEntryOffline(payload);
+  }
   try {
     const res = await fetch(`${API_BASE_URL}/mobile-session/submit`, {
       method: 'POST',
@@ -53,12 +80,19 @@ export async function submitMobileScan(sessionId, payload) {
     });
     return await safeJson(res);
   } catch (e) {
-    // Fallback to offline verification
     return verifyGateEntryOffline(payload);
   }
 }
 
 export async function registerManualUser(userData) {
+  saveSingleLocalUser(userData);
+  if (getClientModePreference() === 'OFFLINE') {
+    return {
+      status: 'SUCCESS',
+      message: `Registered ${userData.role || 'student'}: ${userData.student_name} (Saved to Local Storage)`,
+      user: userData,
+    };
+  }
   try {
     const res = await fetch(`${API_BASE_URL}/register-user`, {
       method: 'POST',
@@ -69,21 +103,21 @@ export async function registerManualUser(userData) {
     if (!res.ok) {
       throw new Error(data.detail || data.message || 'Failed to register user');
     }
-    // Also save to device offline storage
-    saveSingleLocalUser(userData);
     return data;
   } catch (e) {
-    console.warn('Backend unavailable; saving to local device memory:', e.message);
-    const localUser = saveSingleLocalUser(userData);
     return {
       status: 'SUCCESS',
-      message: `Registered ${localUser.role.toLowerCase()}: ${localUser.student_name} (Saved to Phone Storage)`,
-      user: localUser,
+      message: `Registered ${userData.role || 'student'}: ${userData.student_name} (Saved to Phone Memory)`,
+      user: userData,
     };
   }
 }
 
 export async function verifyGateEntry(payload) {
+  if (getClientModePreference() === 'OFFLINE') {
+    // Explicit Offline Mode - Run 100% locally
+    return verifyGateEntryOffline(payload);
+  }
   try {
     const response = await fetch(`${API_BASE_URL}/verify-gate-entry`, {
       method: 'POST',
@@ -97,8 +131,7 @@ export async function verifyGateEntry(payload) {
     }
     return await safeJson(response);
   } catch (error) {
-    console.warn('Backend unreachable / laptop offline; running local offline verification engine:', error.message);
-    // Instant offline engine execution right on device
+    console.warn('Online fetch failed; running local offline verification engine:', error.message);
     return verifyGateEntryOffline(payload);
   }
 }

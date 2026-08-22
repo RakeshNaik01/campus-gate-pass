@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   StatusBar,
   Platform,
-  Modal,
 } from 'react-native';
 import { colors } from './src/theme/colors';
 import ScannerView from './src/components/ScannerView';
@@ -15,15 +14,24 @@ import DatabaseManagementView from './src/components/DatabaseManagementView';
 import AuditLogsView from './src/components/AuditLogsView';
 import VerificationOverlay from './src/components/VerificationOverlay';
 import MobileRemoteLensView from './src/components/MobileRemoteLensView';
-import { verifyGateEntry, getNetworkStatus } from './src/services/api';
+import {
+  verifyGateEntry,
+  getNetworkStatus,
+  getClientModePreference,
+  setClientModePreference,
+  flushSyncQueue,
+} from './src/services/api';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('SECTION_1'); // 'SECTION_1' | 'SECTION_2' | 'SECTION_3'
   const [verificationResult, setVerificationResult] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date().toLocaleTimeString());
-  const [isOnline, setIsOnline] = useState(true);
   const [remoteSessionId, setRemoteSessionId] = useState(null);
+
+  // Explicit User-Selected Mode ('ONLINE' vs 'OFFLINE')
+  const [appMode, setAppMode] = useState(getClientModePreference());
+  const [modeBannerMsg, setModeBannerMsg] = useState(null);
 
   // PWA Install State
   const [deferredPrompt, setDeferredPrompt] = useState(null);
@@ -53,18 +61,29 @@ export default function App() {
       setCurrentTime(new Date().toLocaleTimeString());
     }, 1000);
 
-    const netTimer = setInterval(async () => {
-      try {
-        const net = await getNetworkStatus();
-        setIsOnline(net.is_online);
-      } catch (e) {}
-    }, 4000);
-
     return () => {
       clearInterval(timer);
-      clearInterval(netTimer);
     };
   }, []);
+
+  const handleToggleMode = async () => {
+    const nextMode = appMode === 'ONLINE' ? 'OFFLINE' : 'ONLINE';
+    setAppMode(nextMode);
+    setClientModePreference(nextMode);
+
+    if (nextMode === 'ONLINE') {
+      setModeBannerMsg('🟢 Switched to ONLINE MODE — Connected to Cloud Server & Notification Dispatcher');
+      try {
+        await flushSyncQueue();
+      } catch (e) {}
+    } else {
+      setModeBannerMsg('🟠 Switched to OFFLINE MODE — Running 100% on Device Memory (Zero Internet Needed)');
+    }
+
+    setTimeout(() => {
+      setModeBannerMsg(null);
+    }, 4000);
+  };
 
   const handleInstallClick = async () => {
     if (deferredPrompt) {
@@ -122,6 +141,8 @@ export default function App() {
     );
   }
 
+  const isOnlineMode = appMode === 'ONLINE';
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="light-content" backgroundColor={colors.background} />
@@ -133,7 +154,7 @@ export default function App() {
             <View style={styles.campusBadge}>
               <Text style={styles.campusBadgeText}>CAMPUS GATEWAY</Text>
             </View>
-            <Text style={styles.systemTitle}>Security Gate Access Terminal</Text>
+            <Text style={styles.systemTitle}>Security Gate Console</Text>
           </View>
 
           <View style={styles.headerStatusRow}>
@@ -146,33 +167,31 @@ export default function App() {
               <Text style={styles.installBtnText}>📲 INSTALL APP</Text>
             </TouchableOpacity>
 
-            {/* Live Network Indicator */}
-            <View
+            {/* INTERACTIVE MODE TOGGLE BUTTON */}
+            <TouchableOpacity
               style={[
-                styles.networkPill,
-                {
-                  backgroundColor: isOnline
-                    ? 'rgba(16, 185, 129, 0.15)'
-                    : 'rgba(239, 68, 68, 0.15)',
-                  borderColor: isOnline ? colors.emerald.light : colors.crimson.light,
-                },
+                styles.modeToggleBtn,
+                isOnlineMode ? styles.modeOnlineBtn : styles.modeOfflineBtn,
               ]}
+              activeOpacity={0.7}
+              onPress={handleToggleMode}
             >
               <View
                 style={[
-                  styles.networkDot,
-                  { backgroundColor: isOnline ? colors.emerald.light : colors.crimson.light },
+                  styles.modeDot,
+                  { backgroundColor: isOnlineMode ? colors.emerald.light : '#F59E0B' },
                 ]}
               />
               <Text
                 style={[
-                  styles.networkPillText,
-                  { color: isOnline ? colors.emerald.light : colors.crimson.light },
+                  styles.modeToggleText,
+                  { color: isOnlineMode ? colors.emerald.light : '#F59E0B' },
                 ]}
               >
-                {isOnline ? 'CLOUD ACTIVE' : 'OFFLINE MODE'}
+                {isOnlineMode ? '🟢 ONLINE' : '🟠 OFFLINE'}
               </Text>
-            </View>
+              <Text style={styles.switchHintText}>⇄ SWITCH</Text>
+            </TouchableOpacity>
 
             {/* Digital Clock */}
             <View style={styles.clockBadge}>
@@ -180,6 +199,25 @@ export default function App() {
             </View>
           </View>
         </View>
+
+        {/* Operational Mode Feedback Notification Banner */}
+        {modeBannerMsg && (
+          <View
+            style={[
+              styles.modeBanner,
+              isOnlineMode ? styles.modeBannerOnline : styles.modeBannerOffline,
+            ]}
+          >
+            <Text
+              style={[
+                styles.modeBannerText,
+                isOnlineMode ? styles.modeBannerTextOnline : styles.modeBannerTextOffline,
+              ]}
+            >
+              {modeBannerMsg}
+            </Text>
+          </View>
+        )}
 
         {/* STRICT 3-SECTION NAVIGATION BAR */}
         <View style={styles.navigationBar}>
@@ -194,7 +232,7 @@ export default function App() {
                 activeTab === 'SECTION_1' && styles.navTabTextActive,
               ]}
             >
-              📹 1. SCAN AND VERIFY
+              📹 1. SCAN & VERIFY
             </Text>
           </TouchableOpacity>
 
@@ -209,7 +247,7 @@ export default function App() {
                 activeTab === 'SECTION_2' && styles.navTabTextActive,
               ]}
             >
-              🗄️ 2. DATABASE MANAGEMENT
+              🗄️ 2. DATABASE
             </Text>
           </TouchableOpacity>
 
@@ -232,7 +270,12 @@ export default function App() {
         {/* VIEWPORT BODY */}
         <View style={styles.bodyContent}>
           {activeTab === 'SECTION_1' && (
-            <ScannerView onVerify={handleVerify} isProcessing={isProcessing} />
+            <ScannerView
+              onVerify={handleVerify}
+              isProcessing={isProcessing}
+              appMode={appMode}
+              onToggleMode={handleToggleMode}
+            />
           )}
 
           {activeTab === 'SECTION_2' && <DatabaseManagementView />}
@@ -252,7 +295,7 @@ export default function App() {
             <View style={styles.modalCard}>
               <Text style={styles.modalTitle}>📱 Install GatePass on Mobile</Text>
               <Text style={styles.modalSub}>
-                Install this app directly to your home screen for full-screen camera scanning and instant offline access:
+                Install this app to your home screen for full-screen camera scanning and instant offline access:
               </Text>
 
               <View style={styles.instructionStep}>
@@ -300,8 +343,8 @@ const styles = StyleSheet.create({
   },
   topHeader: {
     backgroundColor: colors.surface,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
     flexDirection: 'row',
@@ -341,39 +384,53 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(59, 130, 246, 0.2)',
     borderWidth: 1,
     borderColor: colors.primaryLight,
-    paddingHorizontal: 10,
+    paddingHorizontal: 8,
     paddingVertical: 5,
     borderRadius: 6,
   },
   installBtnText: {
     color: colors.primaryLight,
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  modeToggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    gap: 5,
+  },
+  modeOnlineBtn: {
+    backgroundColor: 'rgba(16, 185, 129, 0.2)',
+    borderColor: colors.emerald.light,
+  },
+  modeOfflineBtn: {
+    backgroundColor: 'rgba(245, 158, 11, 0.2)',
+    borderColor: '#F59E0B',
+  },
+  modeDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+  },
+  modeToggleText: {
     fontSize: 10,
     fontWeight: '900',
     letterSpacing: 0.5,
   },
-  networkPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-    borderWidth: 1,
-    gap: 5,
-  },
-  networkDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  networkPillText: {
-    fontSize: 10,
+  switchHintText: {
+    fontSize: 8,
+    color: colors.textMuted,
     fontWeight: '800',
-    letterSpacing: 0.5,
+    marginLeft: 2,
   },
   clockBadge: {
     backgroundColor: colors.cardBg,
     paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingVertical: 5,
     borderRadius: 6,
     borderWidth: 1,
     borderColor: colors.border,
@@ -383,6 +440,31 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
+  modeBanner: {
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderBottomWidth: 1,
+    alignItems: 'center',
+  },
+  modeBannerOnline: {
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    borderBottomColor: colors.emerald.light,
+  },
+  modeBannerOffline: {
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    borderBottomColor: '#F59E0B',
+  },
+  modeBannerText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  modeBannerTextOnline: {
+    color: colors.emerald.light,
+  },
+  modeBannerTextOffline: {
+    color: '#FCD34D',
   },
   navigationBar: {
     flexDirection: 'row',
@@ -394,7 +476,7 @@ const styles = StyleSheet.create({
   },
   navTab: {
     flex: 1,
-    paddingVertical: 10,
+    paddingVertical: 9,
     alignItems: 'center',
     borderRadius: 8,
   },

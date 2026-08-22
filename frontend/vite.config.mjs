@@ -58,6 +58,7 @@ const proxyRules = {
 };
 
 export default defineConfig({
+  base: './',
   plugins: [
     reactNativeNodeModulesJsx(),
     react(),

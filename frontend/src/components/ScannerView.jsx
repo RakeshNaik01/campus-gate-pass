@@ -16,38 +16,14 @@ import { getNetworkStatus, toggleNetworkStatus } from '../services/api';
 import WebCameraStream from './WebCameraStream';
 import MobileCameraModal from './MobileCameraModal';
 
-export default function ScannerView({ onVerify, isProcessing }) {
+export default function ScannerView({ onVerify, isProcessing, appMode = 'ONLINE', onToggleMode }) {
   const [scanMode, setScanMode] = useState('QR'); // 'QR' or 'OCR'
   const [manualInput, setManualInput] = useState('');
   const [scannedRecent, setScannedRecent] = useState(false);
   const [permission, requestPermission] = useCameraPermissions();
-  const [isOnline, setIsOnline] = useState(true);
-  const [isTogglingNetwork, setIsTogglingNetwork] = useState(false);
   const [isMobileModalOpen, setIsMobileModalOpen] = useState(false);
 
-  useEffect(() => {
-    loadNetwork();
-  }, []);
-
-  const loadNetwork = async () => {
-    try {
-      const net = await getNetworkStatus();
-      setIsOnline(net.is_online);
-    } catch (e) {}
-  };
-
-  const handleToggleNetwork = async () => {
-    setIsTogglingNetwork(true);
-    try {
-      const next = !isOnline;
-      const res = await toggleNetworkStatus(next);
-      setIsOnline(res.is_online);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsTogglingNetwork(false);
-    }
-  };
+  const isOnlineMode = appMode === 'ONLINE';
 
   const handleScanPayload = (data) => {
     if (scannedRecent || isProcessing || !data) return;
@@ -76,27 +52,26 @@ export default function ScannerView({ onVerify, isProcessing }) {
 
   return (
     <View style={styles.container}>
-      {/* Top Station & Network Simulation Bar */}
+      {/* Top Station & Network Mode Switcher Bar */}
       <View style={styles.networkBanner}>
         <View style={styles.netInfo}>
           <View
             style={[
               styles.netDot,
-              { backgroundColor: isOnline ? colors.emerald.light : colors.crimson.light },
+              { backgroundColor: isOnlineMode ? colors.emerald.light : '#F59E0B' },
             ]}
           />
           <Text style={styles.netText}>
-            STATION MODE: {isOnline ? 'ONLINE (Twilio/SendGrid Live)' : 'OFFLINE (SQLite Local Cache)'}
+            CURRENT MODE: {isOnlineMode ? '🟢 ONLINE (Cloud & Alerts Active)' : '🟠 OFFLINE (Device Memory & Queue)'}
           </Text>
         </View>
 
         <TouchableOpacity
-          style={[styles.toggleNetBtn, isOnline ? styles.toggleOffline : styles.toggleOnline]}
-          onPress={handleToggleNetwork}
-          disabled={isTogglingNetwork}
+          style={[styles.toggleNetBtn, isOnlineMode ? styles.toggleOffline : styles.toggleOnline]}
+          onPress={onToggleMode}
         >
           <Text style={styles.toggleNetBtnText}>
-            {isOnline ? '🔌 Simulate Offline' : '🌐 Restore Online'}
+            {isOnlineMode ? '🟠 Switch to OFFLINE' : '🟢 Switch to ONLINE'}
           </Text>
         </TouchableOpacity>
       </View>
