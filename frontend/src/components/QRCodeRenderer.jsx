@@ -13,11 +13,12 @@ try {
   QRCodeNative = require('react-native-qrcode-svg').default;
 } catch (e) {}
 
-export default function QRCodeRenderer({ value, size = 180, color = '#000000', backgroundColor = '#FFFFFF' }) {
+export default function QRCodeRenderer({ id, value, size = 180, color = '#000000', backgroundColor = '#FFFFFF' }) {
   if (Platform.OS === 'web' && QRCodeWeb) {
     return (
       <View style={[styles.container, { width: size, height: size, backgroundColor }]}>
         <QRCodeWeb
+          id={id}
           value={value || ''}
           size={size}
           fgColor={color}

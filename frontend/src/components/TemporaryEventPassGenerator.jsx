@@ -9,10 +9,41 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
+import JSZip from 'jszip';
 import QRCodeRenderer from './QRCodeRenderer';
 import { colors } from '../theme/colors';
 import { fetchUsers } from '../services/api';
 import { parseExcelClientSide } from '../services/offlineEngine';
+
+// Helper to convert rendered SVG QR element to PNG Blob
+const convertSvgToPngBlob = (svgElement) => {
+  return new Promise((resolve, reject) => {
+    try {
+      const svgData = new XMLSerializer().serializeToString(svgElement);
+      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+      const DOMURL = window.URL || window.webkitURL || window;
+      const url = DOMURL.createObjectURL(svgBlob);
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 500;
+        canvas.height = 500;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, 500, 500);
+        ctx.drawImage(img, 0, 0, 500, 500);
+        DOMURL.revokeObjectURL(url);
+        canvas.toBlob((blob) => {
+          resolve(blob);
+        }, 'image/png');
+      };
+      img.onerror = (e) => reject(e);
+      img.src = url;
+    } catch (e) {
+      reject(e);
+    }
+  });
+};
 
 export default function TemporaryEventPassGenerator({ onTestScanAtGate }) {
   // Mode: 'SINGLE' or 'BATCH'
@@ -49,6 +80,8 @@ export default function TemporaryEventPassGenerator({ onTestScanAtGate }) {
   const [generatedBatchPasses, setGeneratedBatchPasses] = useState([]);
   const [batchSuccessMsg, setBatchSuccessMsg] = useState('');
   const [batchSearch, setBatchSearch] = useState('');
+  const [isZipping, setIsZipping] = useState(false);
+  const [zipProgressMsg, setZipProgressMsg] = useState('');
 
   const fileInputRef = useRef(null);
 
@@ -234,6 +267,74 @@ export default function TemporaryEventPassGenerator({ onTestScanAtGate }) {
       window.print();
     } else {
       alert('Printing is available on web browsers.');
+    }
+  };
+
+  // --- 1-CLICK ZIP ARCHIVE DOWNLOAD FOR ALL STUDENT QRS ---
+  const handleDownloadAllQrZip = async () => {
+    if (generatedBatchPasses.length === 0) return;
+    setIsZipping(true);
+    setZipProgressMsg(`⏳ Generating ZIP package with ${generatedBatchPasses.length} QR Code image badges...`);
+
+    try {
+      const zip = new JSZip();
+      const folderName = `Class_QR_Passes_${eventName.replace(/[^a-zA-Z0-9_-]/g, '_')}_${gateDirection}`;
+      const folder = zip.folder(folderName);
+
+      for (let i = 0; i < generatedBatchPasses.length; i++) {
+        const item = generatedBatchPasses[i];
+        const htn = (item.payload.hall_ticket_number || `ST-${i}`).replace(/[^a-zA-Z0-9_-]/g, '_');
+        const name = (item.payload.participant_name || 'Student').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '');
+        const filename = `${htn}_${name}_${item.payload.gate_direction}.png`;
+
+        const svgEl = document.getElementById(`batch-qr-svg-${item.payload.hall_ticket_number}`);
+        if (svgEl) {
+          const blob = await convertSvgToPngBlob(svgEl);
+          folder.file(filename, blob);
+        }
+      }
+
+      setZipProgressMsg(`📦 Compressing ZIP file...`);
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(zipBlob);
+        link.download = `${folderName}.zip`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+
+      setZipProgressMsg(`✅ Downloaded ZIP archive containing all ${generatedBatchPasses.length} QR codes!`);
+      setTimeout(() => setZipProgressMsg(''), 4000);
+    } catch (err) {
+      console.error(err);
+      alert(`Could not create ZIP: ${err.message || err}`);
+    } finally {
+      setIsZipping(false);
+    }
+  };
+
+  // --- DOWNLOAD INDIVIDUAL STUDENT PNG IMAGE ---
+  const handleDownloadSingleStudentPng = async (item) => {
+    try {
+      const svgEl = document.getElementById(`batch-qr-svg-${item.payload.hall_ticket_number}`);
+      if (!svgEl) {
+        alert('QR element not found.');
+        return;
+      }
+      const blob = await convertSvgToPngBlob(svgEl);
+      const htn = (item.payload.hall_ticket_number || 'STUDENT').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const name = (item.payload.participant_name || 'Student').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '');
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `${htn}_${name}_${item.payload.gate_direction}_QR.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (e) {
+      alert('Failed to download QR image.');
     }
   };
 
@@ -530,6 +631,18 @@ export default function TemporaryEventPassGenerator({ onTestScanAtGate }) {
 
                 <View style={styles.batchActionsRow}>
                   <TouchableOpacity
+                    style={styles.zipDownloadBtn}
+                    onPress={handleDownloadAllQrZip}
+                    disabled={isZipping}
+                  >
+                    {isZipping ? (
+                      <ActivityIndicator color="#FFFFFF" size="small" />
+                    ) : (
+                      <Text style={styles.zipDownloadBtnText}>📦 Download All QRs (ZIP)</Text>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
                     style={styles.exportCsvBtn}
                     onPress={handleExportBatchToCsv}
                   >
@@ -540,10 +653,17 @@ export default function TemporaryEventPassGenerator({ onTestScanAtGate }) {
                     style={styles.printAllBtn}
                     onPress={handlePrintBatch}
                   >
-                    <Text style={styles.printAllBtnText}>🖨️ Print Class Badges Sheet</Text>
+                    <Text style={styles.printAllBtnText}>🖨️ Print Badges Sheet</Text>
                   </TouchableOpacity>
                 </View>
               </View>
+
+              {/* ZIP Progress Message */}
+              {zipProgressMsg ? (
+                <View style={styles.zipBanner}>
+                  <Text style={styles.zipBannerText}>{zipProgressMsg}</Text>
+                </View>
+              ) : null}
 
               {/* Search Filter in Batch */}
               <TextInput
@@ -571,6 +691,7 @@ export default function TemporaryEventPassGenerator({ onTestScanAtGate }) {
                     {/* QR Code */}
                     <View style={styles.batchQrContainer}>
                       <QRCodeRenderer
+                        id={`batch-qr-svg-${item.payload.hall_ticket_number}`}
                         value={item.tokenString}
                         size={Platform.OS === 'web' ? 140 : 120}
                         color="#000000"
@@ -593,17 +714,26 @@ export default function TemporaryEventPassGenerator({ onTestScanAtGate }) {
                       Valid: {item.validTillFormatted}
                     </Text>
 
-                    {/* Test Gate Button */}
-                    <TouchableOpacity
-                      style={styles.cardTestBtn}
-                      onPress={() => {
-                        if (onTestScanAtGate) {
-                          onTestScanAtGate(item.tokenString);
-                        }
-                      }}
-                    >
-                      <Text style={styles.cardTestBtnText}>⚡ Test Scan Gate</Text>
-                    </TouchableOpacity>
+                    {/* Card Action Buttons: Download PNG & Test Scan */}
+                    <View style={styles.cardBtnRow}>
+                      <TouchableOpacity
+                        style={styles.cardDownloadBtn}
+                        onPress={() => handleDownloadSingleStudentPng(item)}
+                      >
+                        <Text style={styles.cardDownloadBtnText}>📥 PNG</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.cardTestBtn}
+                        onPress={() => {
+                          if (onTestScanAtGate) {
+                            onTestScanAtGate(item.tokenString);
+                          }
+                        }}
+                      >
+                        <Text style={styles.cardTestBtnText}>⚡ Gate Test</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
                 ))}
               </View>
@@ -1153,14 +1283,43 @@ const styles = StyleSheet.create({
   },
   batchActionsRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
+  },
+  zipDownloadBtn: {
+    backgroundColor: '#3B82F6',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  zipDownloadBtnText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '900',
+  },
+  zipBanner: {
+    backgroundColor: 'rgba(59, 130, 246, 0.2)',
+    borderWidth: 1,
+    borderColor: '#3B82F6',
+    padding: 8,
+    borderRadius: 6,
+    marginBottom: 10,
+  },
+  zipBannerText: {
+    color: '#93C5FD',
+    fontSize: 10,
+    fontWeight: '800',
+    textAlign: 'center',
   },
   exportCsvBtn: {
     backgroundColor: '#0F172A',
     borderWidth: 1,
     borderColor: colors.border,
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 7,
     borderRadius: 6,
   },
   exportCsvBtnText: {
@@ -1171,7 +1330,7 @@ const styles = StyleSheet.create({
   printAllBtn: {
     backgroundColor: '#10B981',
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingVertical: 7,
     borderRadius: 6,
   },
   printAllBtnText: {
@@ -1266,15 +1425,34 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
     marginTop: 2,
   },
-  cardTestBtn: {
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
-    borderWidth: 1,
-    borderColor: '#10B981',
+  cardBtnRow: {
+    flexDirection: 'row',
+    gap: 6,
     width: '100%',
+    marginTop: 8,
+  },
+  cardDownloadBtn: {
+    flex: 1,
+    backgroundColor: '#1E293B',
+    borderWidth: 1,
+    borderColor: '#475569',
     paddingVertical: 5,
     borderRadius: 6,
     alignItems: 'center',
-    marginTop: 8,
+  },
+  cardDownloadBtnText: {
+    color: '#93C5FD',
+    fontSize: 8,
+    fontWeight: '900',
+  },
+  cardTestBtn: {
+    flex: 1.2,
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    borderWidth: 1,
+    borderColor: '#10B981',
+    paddingVertical: 5,
+    borderRadius: 6,
+    alignItems: 'center',
   },
   cardTestBtnText: {
     color: '#34D399',
