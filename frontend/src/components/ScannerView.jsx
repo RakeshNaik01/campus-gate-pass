@@ -73,7 +73,7 @@ export default function ScannerView({ onVerify, isProcessing, appMode = 'ONLINE'
   ];
 
   return (
-    <View style={styles.container}>
+    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
       {/* Explicit 2-Button Manual Mode Selector Bar */}
       <View style={styles.networkBanner}>
         <View style={styles.netInfo}>
@@ -267,7 +267,7 @@ export default function ScannerView({ onVerify, isProcessing, appMode = 'ONLINE'
           handleScanPayload(payload);
         }}
       />
-    </View>
+    </ScrollView>
   );
 }
 
@@ -275,7 +275,10 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
+  },
+  scrollContent: {
     padding: 16,
+    paddingBottom: 60,
   },
   networkBanner: {
     flexDirection: 'row',

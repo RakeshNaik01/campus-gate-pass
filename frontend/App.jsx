@@ -563,6 +563,8 @@ const styles = StyleSheet.create({
   },
   bodyContent: {
     flex: 1,
+    overflow: Platform.OS === 'web' ? 'auto' : 'visible',
+    minHeight: 0,
   },
   modalOverlay: {
     ...StyleSheet.absoluteFillObject,
